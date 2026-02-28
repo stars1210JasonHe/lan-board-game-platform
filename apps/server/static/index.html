@@ -184,7 +184,7 @@ function getNick() {
 function connect() {
   ws = new WebSocket(WS_URL);
   ws.onopen = () => { myNick = getNick(); ws.send(JSON.stringify({ type: 'identify', nick: myNick })); };
-  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+  ws.onmessage = e => { try { handleMsg(JSON.parse(e.data)); } catch(err) { console.warn('Bad WS message:', err); } };
   ws.onclose = () => setTimeout(connect, 2000);
 }
 
@@ -206,7 +206,7 @@ function handleMsg(msg) {
   if (msg.type === 'chat') appendChat(msg.message);
   if (msg.type === 'match_end') showEndModal(msg);
   if (msg.type === 'player_ready') {}
-  if (msg.type === 'player_left') appendChat({ nick:'System', text:`${msg.nick} left.`, system:true });
+  if (msg.type === 'player_left') appendChat({ nick:'System', text:`${String(msg.nick)} left.`, system:true });
   if (msg.type === 'error') console.warn('Server error:', msg.msg);
 }
 
@@ -222,11 +222,11 @@ function renderRooms(rooms) {
   const el = document.getElementById('rooms-container');
   if (!rooms.length) { el.innerHTML = '<p style="color:#aaa;text-align:center">No rooms yet. Create one!</p>'; return; }
   el.innerHTML = rooms.map(r => `
-    <div class="room-card" onclick="joinRoom('${r.id}')">
-      <h3>${r.gameType.toUpperCase()}</h3>
-      <div class="meta">Room: ${r.id} · ${r.playerCount}/2 players</div>
-      <div>${r.players.map(p=>`<span style="margin-right:8px">👤 ${p.nick}${p.isAi?' 🤖':''}</span>`).join('')}</div>
-      <div style="margin-top:8px"><span class="badge badge-${r.state}">${r.state}</span></div>
+    <div class="room-card" onclick="joinRoom('${escHtml(r.id)}')">
+      <h3>${escHtml(r.gameType.toUpperCase())}</h3>
+      <div class="meta">Room: ${escHtml(r.id)} · ${r.playerCount}/2 players</div>
+      <div>${r.players.map(p=>`<span style="margin-right:8px">👤 ${escHtml(p.nick)}${p.isAi?' 🤖':''}</span>`).join('')}</div>
+      <div style="margin-top:8px"><span class="badge badge-${escHtml(r.state)}">${escHtml(r.state)}</span></div>
     </div>
   `).join('');
 }
@@ -271,8 +271,8 @@ function updateRoomState(room) {
   const pArr = Object.entries(room.players);
   pl.innerHTML = pArr.map(([id, p]) => `
     <div class="player-slot">
-      <div class="nick">${p.nick}${p.isAi?' 🤖':''}</div>
-      <div class="side">${p.side ?? '—'}</div>
+      <div class="nick">${escHtml(p.nick)}${p.isAi?' 🤖':''}</div>
+      <div class="side">${escHtml(p.side ?? '—')}</div>
       <div class="ready-dot ${p.ready?'ready':'not-ready'}"></div>
     </div>
   `).join('') || '<div class="player-slot"><div class="nick" style="color:#aaa">Waiting...</div></div>';
@@ -315,7 +315,7 @@ function appendChat(msg, scope) {
     if (!el) return;
     const div = document.createElement('div');
     div.className = `chat-msg${msg.system?' system':''}${msg.isAi?' ai':''}`;
-    div.innerHTML = `<span class="sender" style="color:${msg.system?'#f39c12':msg.isAi?'#9b59b6':'#7ec8e3'}">${msg.nick}:</span> ${escHtml(msg.text)}`;
+    div.innerHTML = `<span class="sender" style="color:${msg.system?'#f39c12':msg.isAi?'#9b59b6':'#7ec8e3'}">${escHtml(msg.nick)}:</span> ${escHtml(msg.text)}`;
     el.appendChild(div);
     el.scrollTop = el.scrollHeight;
   });

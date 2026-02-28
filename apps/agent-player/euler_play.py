@@ -160,28 +160,116 @@ def chess_move(legal_moves):
 # ── Xiangqi AI (local fallback) ───────────────────────────────────────────────
 
 def xiangqi_move(board_rows, side):
+    """Basic xiangqi move generator using simple piece movement rules.
+    Generates plausible (not guaranteed legal) moves; server validates."""
     upper = side == 'red'
+    board = [list(row) for row in board_rows]
+
+    def in_bounds(r, c):
+        return 0 <= r <= 9 and 0 <= c <= 8
+
+    def is_enemy(r, c):
+        p = board[r][c]
+        if p == ' ':
+            return False
+        return (p == p.upper()) != upper
+
+    def is_empty(r, c):
+        return board[r][c] == ' '
+
+    def can_target(r, c):
+        return in_bounds(r, c) and (is_empty(r, c) or is_enemy(r, c))
+
+    def piece_moves(r, c, p):
+        t = p.upper()
+        moves = []
+        if t == 'K':
+            palace_rows = range(7, 10) if upper else range(0, 3)
+            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nr, nc = r+dr, c+dc
+                if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
+                    moves.append((nr, nc))
+        elif t == 'A':
+            palace_rows = range(7, 10) if upper else range(0, 3)
+            for dr, dc in [(1,1),(1,-1),(-1,1),(-1,-1)]:
+                nr, nc = r+dr, c+dc
+                if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
+                    moves.append((nr, nc))
+        elif t == 'B':
+            home = range(5, 10) if upper else range(0, 5)
+            for dr, dc in [(2,2),(2,-2),(-2,2),(-2,-2)]:
+                nr, nc = r+dr, c+dc
+                mr, mc = r+dr//2, c+dc//2
+                if in_bounds(nr, nc) and nr in home and is_empty(mr, mc) and can_target(nr, nc):
+                    moves.append((nr, nc))
+        elif t == 'N':
+            for dr, dc, br, bc in [(-1,0,-2,1),(-1,0,-2,-1),(1,0,2,1),(1,0,2,-1),(0,-1,1,-2),(0,-1,-1,-2),(0,1,1,2),(0,1,-1,2)]:
+                sr, sc = r+dr, c+dc
+                if in_bounds(sr, sc) and is_empty(sr, sc):
+                    nr, nc = r+br, c+bc
+                    if in_bounds(nr, nc) and can_target(nr, nc):
+                        moves.append((nr, nc))
+        elif t == 'R':
+            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nr, nc = r+dr, c+dc
+                while in_bounds(nr, nc):
+                    if is_empty(nr, nc):
+                        moves.append((nr, nc))
+                    else:
+                        if is_enemy(nr, nc):
+                            moves.append((nr, nc))
+                        break
+                    nr += dr; nc += dc
+        elif t == 'C':
+            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                nr, nc = r+dr, c+dc
+                jumped = False
+                while in_bounds(nr, nc):
+                    if not jumped:
+                        if is_empty(nr, nc):
+                            moves.append((nr, nc))
+                        else:
+                            jumped = True
+                    else:
+                        if not is_empty(nr, nc):
+                            if is_enemy(nr, nc):
+                                moves.append((nr, nc))
+                            break
+                    nr += dr; nc += dc
+        elif t == 'P':
+            fwd = -1 if upper else 1
+            crossed = r <= 4 if upper else r >= 5
+            nr, nc = r+fwd, c
+            if in_bounds(nr, nc) and can_target(nr, nc):
+                moves.append((nr, nc))
+            if crossed:
+                for dc in [-1, 1]:
+                    if in_bounds(r, c+dc) and can_target(r, c+dc):
+                        moves.append((r, c+dc))
+        return moves
+
+    # Collect all moves, prefer captures
+    all_moves = []
+    captures = []
     pieces = []
-    for r, row in enumerate(board_rows):
+    for r, row in enumerate(board):
         for c, p in enumerate(row):
             if p == ' ':
                 continue
-            is_upper = p == p.upper()
-            if is_upper == upper:
+            if (p == p.upper()) == upper:
                 pieces.append((r, c, p))
 
-    random.shuffle(pieces)
     for r, c, p in pieces:
-        candidates = []
-        for dr in range(-9, 10):
-            for dc in range(-8, 9):
-                if dr == 0 and dc == 0:
-                    continue
-                nr, nc = r+dr, c+dc
-                if 0 <= nr <= 9 and 0 <= nc <= 8:
-                    candidates.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
-        if candidates:
-            return random.choice(candidates[:10])
+        for nr, nc in piece_moves(r, c, p):
+            move = {"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc}
+            all_moves.append(move)
+            if is_enemy(nr, nc):
+                captures.append(move)
+
+    if captures:
+        return random.choice(captures)
+    if all_moves:
+        return random.choice(all_moves)
     return None
 
 

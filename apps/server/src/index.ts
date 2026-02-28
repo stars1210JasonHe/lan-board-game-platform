@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { execFile } from 'child_process';
@@ -12,7 +12,6 @@ import { XiangqiGame } from './games/xiangqi.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = 8765;
-const AI_PORT = 8766;
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 const db = new Database('matches.db');
@@ -196,8 +195,10 @@ function bestGomokuMove(game: any): any {
 function bestChessMove(game: any): any {
   const moves = game.legalMoves();
   if (!moves.length) return null;
-  // Pick captures first, otherwise random
-  const captures = moves.filter((m: string) => m.includes('x') || game['chess']?.get(m.slice(2,4)));
+  // Prefer captures: check if destination square is occupied via verbose moves
+  const verboseMoves = game['chess']?.moves({ verbose: true }) ?? [];
+  const captureUcis = new Set(verboseMoves.filter((m: any) => m.captured).map((m: any) => m.from + m.to + (m.promotion || '')));
+  const captures = moves.filter((m: string) => captureUcis.has(m));
   const pool = captures.length ? captures : moves;
   const uci = pool[Math.floor(Math.random() * pool.length)];
   return { uci };
@@ -230,8 +231,9 @@ async function handleMatchEnd(room: any, result: any) {
   const draw = result.draw ?? false;
   const reason = result.reason ?? game.winnerReason ?? 'unknown';
 
-  const p1 = Object.values<any>(room.players).find((p:any) => !p.isAi);
-  const p2 = Object.values<any>(room.players).find((p:any, i:number) => i===1);
+  const allPlayers = Object.values<any>(room.players);
+  const p1 = allPlayers[0];
+  const p2 = allPlayers[1];
   const resultStr = draw ? `Draw (${reason})` : winner ? `${winner} wins (${reason})` : 'Unknown';
 
   saveMatch({
@@ -353,8 +355,8 @@ async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
     const body = JSON.parse(await readBody(req));
     const { board, size, currentPlayer, currentPlayerName, moveCount, gameType, side } = body;
 
-    if (!board || !size || gameType !== 'gomoku') {
-      jsonResponse(res, 400, { error: 'Invalid request: gomoku board required' });
+    if (!Array.isArray(board) || typeof size !== 'number' || size < 1 || size > 19 || gameType !== 'gomoku') {
+      jsonResponse(res, 400, { error: 'Invalid request: gomoku board (array) and valid size required' });
       return;
     }
 
@@ -398,10 +400,11 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
       jsonResponse(res, 400, { error: 'text is required' });
       return;
     }
+    const safeText = text.slice(0, 500);
 
     const message = gameContext
-      ? `[Context: ${CHAT_SYSTEM_CONTEXT}] [Game: ${gameContext}]\n${text}`
-      : `[Context: ${CHAT_SYSTEM_CONTEXT}]\n${text}`;
+      ? `[Context: ${CHAT_SYSTEM_CONTEXT}] [Game: ${String(gameContext).slice(0, 200)}]\n${safeText}`
+      : `[Context: ${CHAT_SYSTEM_CONTEXT}]\n${safeText}`;
 
     try {
       const reply = await callOpenclawAgent('euler-gomoku-game', message, 15);
@@ -443,14 +446,15 @@ const httpServer = createServer((req, res) => {
     handleApiChat(req, res);
     return;
   }
-  // Serve static
-  let rawPath = req.url === '/' ? '/index.html' : (req.url ?? '/index.html'); let path = rawPath.replace(/\.\.[\/]/g, '').replace(/^\/+/, '/');
-  const filePath = join(staticDir, path);
+  // Serve static — resolve and verify path stays within staticDir
+  const rawPath = decodeURIComponent((req.url === '/' ? '/index.html' : (req.url ?? '/index.html')).split('?')[0]);
+  const filePath = resolve(staticDir, rawPath.replace(/^\/+/, ''));
+  if (!filePath.startsWith(staticDir)) { res.writeHead(403); res.end('Forbidden'); return; }
   try {
     const content = readFileSync(filePath);
-    const ext = path.split('.').pop();
-    const ct: Record<string,string> = { html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png' };
-    res.writeHead(200, { 'Content-Type': ct[ext ?? ''] ?? 'text/plain', ...noCacheHeaders });
+    const ext = filePath.split('.').pop();
+    const ct: Record<string,string> = { html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png', svg: 'image/svg+xml', ico: 'image/x-icon', json: 'application/json' };
+    res.writeHead(200, { 'Content-Type': ct[ext ?? ''] ?? 'application/octet-stream', ...noCacheHeaders });
     res.end(content);
   } catch {
     const idx = join(staticDir, 'index.html');
@@ -473,7 +477,7 @@ wss.on('connection', (ws) => {
     const type = msg.type;
 
     if (type === 'identify') {
-      nick = String(msg.nick ?? 'Anonymous').slice(0, 30).trim() || 'Anonymous';
+      nick = String(msg.nick ?? 'Anonymous').replace(/[<>&"']/g, '').slice(0, 30).trim() || 'Anonymous';
       ws.send(JSON.stringify({ type: 'identified', clientId, nick }));
       ws.send(JSON.stringify({ type: 'rooms_list', rooms: Array.from(rooms.values()).map(roomSummary) }));
       return;
