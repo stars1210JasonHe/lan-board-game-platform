@@ -1,9 +1,10 @@
 import { WebSocketServer, WebSocket } from 'ws';
-import { createServer } from 'http';
+import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
+import { execFile } from 'child_process';
 import Database from 'better-sqlite3';
 import { GomokuGame, BLACK as GB, WHITE as GW } from './games/gomoku.js';
 import { ChessGame } from './games/chess.js';
@@ -125,8 +126,9 @@ async function maybeAiMove(room: any) {
   const gt = room.gameType;
   const gs = room.game.stateDict();
   const curSide = gs.currentPlayer;
+  const curSideName = gs.currentPlayerName ?? curSide;
 
-  const aiEntry = Object.entries<any>(room.players).find(([id, p]) => p.isAi && p.side === curSide);
+  const aiEntry = Object.entries<any>(room.players).find(([id, p]) => p.isAi && (p.side === curSide || p.side === curSideName));
   if (!aiEntry) return;
   const [aiId, aiPlayer] = aiEntry;
 
@@ -295,13 +297,150 @@ function broadcastRoomsUpdate() {
   }
 }
 
-// ── HTTP server (serve static files) ─────────────────────────────────────────
+// ── API helpers ──────────────────────────────────────────────────────────────
+
+function readBody(req: IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 1_000_000) { reject(new Error('body too large')); req.destroy(); return; }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
+    req.on('error', reject);
+  });
+}
+
+function jsonResponse(res: ServerResponse, status: number, data: any) {
+  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' });
+  res.end(JSON.stringify(data));
+}
+
+function callOpenclawAgent(sessionId: string, message: string, timeout: number): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const args = ['agent', '--session-id', sessionId, '--message', message, '--json', '--timeout', String(timeout)];
+    const child = execFile('openclaw', args, { timeout: (timeout + 5) * 1000 }, (err, stdout, stderr) => {
+      if (err) { reject(new Error(stderr?.slice(0, 200) || err.message)); return; }
+      try {
+        const result = JSON.parse(stdout);
+        const payloads = result?.result?.payloads ?? [];
+        const text = payloads[0]?.text ?? '';
+        resolve(text);
+      } catch (e) {
+        reject(new Error('Failed to parse openclaw response'));
+      }
+    });
+  });
+}
+
+function boardToCompactGrid(board: number[][], size: number): string {
+  const lines: string[] = ['   ' + Array.from({length: size}, (_, i) => String(i).padStart(2)).join(' ')];
+  for (let r = 0; r < size; r++) {
+    let row = String(r).padStart(2) + ' ';
+    for (let c = 0; c < size; c++) {
+      const cell = board[r][c];
+      row += cell === 1 ? ' X ' : cell === 2 ? ' O ' : ' . ';
+    }
+    lines.push(row);
+  }
+  return lines.join('\n');
+}
+
+async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const { board, size, currentPlayer, currentPlayerName, moveCount, gameType, side } = body;
+
+    if (!board || !size || gameType !== 'gomoku') {
+      jsonResponse(res, 400, { error: 'Invalid request: gomoku board required' });
+      return;
+    }
+
+    const grid = boardToCompactGrid(board, size);
+    const mySymbol = side === 'black' || currentPlayer === 1
+      ? 'X (black, player 1)' : 'O (white, player 2)';
+
+    const prompt = `You are playing Gomoku on a ${size}x${size} board. Get 5 in a row to win.
+You are: ${mySymbol}. Move #${(moveCount ?? 0) + 1}.
+Board (X=black, O=white, .=empty):
+${grid}
+Reply with ONLY your move as: row,col`;
+
+    try {
+      const reply = await callOpenclawAgent('euler-gomoku-moves', prompt, 30);
+      const match = reply.match(/(\d+)\s*[,\s]\s*(\d+)/);
+      if (match) {
+        const row = parseInt(match[1]), col = parseInt(match[2]);
+        if (row >= 0 && row < size && col >= 0 && col < size && board[row][col] === 0) {
+          jsonResponse(res, 200, { row, col });
+          return;
+        }
+      }
+      jsonResponse(res, 200, { error: 'AI returned invalid move, use fallback', raw: reply });
+    } catch (e: any) {
+      jsonResponse(res, 200, { error: `AI unavailable: ${e.message}` });
+    }
+  } catch (e: any) {
+    jsonResponse(res, 400, { error: `Bad request: ${e.message}` });
+  }
+}
+
+const CHAT_SYSTEM_CONTEXT = 'You are Euler, playing a board game. Keep replies SHORT (1-2 sentences), playful, competitive. Use emojis sparingly.';
+
+async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
+  try {
+    const body = JSON.parse(await readBody(req));
+    const { text, gameContext, gameType } = body;
+
+    if (!text || typeof text !== 'string') {
+      jsonResponse(res, 400, { error: 'text is required' });
+      return;
+    }
+
+    const message = gameContext
+      ? `[Context: ${CHAT_SYSTEM_CONTEXT}] [Game: ${gameContext}]\n${text}`
+      : `[Context: ${CHAT_SYSTEM_CONTEXT}]\n${text}`;
+
+    try {
+      const reply = await callOpenclawAgent('euler-gomoku-game', message, 15);
+      if (!reply || reply.trim() === '' || reply.trim() === 'NO_REPLY' || reply.trim() === 'HEARTBEAT_OK') {
+        jsonResponse(res, 200, { reply: null });
+        return;
+      }
+      const trimmed = reply.trim().slice(0, 200);
+      jsonResponse(res, 200, { reply: trimmed });
+    } catch {
+      jsonResponse(res, 200, { reply: null });
+    }
+  } catch (e: any) {
+    jsonResponse(res, 400, { error: `Bad request: ${e.message}` });
+  }
+}
+
+// ── HTTP server (serve static files + API) ───────────────────────────────────
 const staticDir = join(__dirname, '..', 'static');
 
 const httpServer = createServer((req, res) => {
+  // No-cache headers for all responses
+  const noCacheHeaders = {
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0'
+  };
+
   if (req.url === '/api/history') {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json', ...noCacheHeaders });
     res.end(JSON.stringify(listMatches()));
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/move') {
+    handleApiMove(req, res);
+    return;
+  }
+  if (req.method === 'POST' && req.url === '/api/chat') {
+    handleApiChat(req, res);
     return;
   }
   // Serve static
@@ -311,11 +450,11 @@ const httpServer = createServer((req, res) => {
     const content = readFileSync(filePath);
     const ext = path.split('.').pop();
     const ct: Record<string,string> = { html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png' };
-    res.writeHead(200, { 'Content-Type': ct[ext ?? ''] ?? 'text/plain' });
+    res.writeHead(200, { 'Content-Type': ct[ext ?? ''] ?? 'text/plain', ...noCacheHeaders });
     res.end(content);
   } catch {
     const idx = join(staticDir, 'index.html');
-    if (existsSync(idx)) { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end(readFileSync(idx)); }
+    if (existsSync(idx)) { res.writeHead(200, { 'Content-Type': 'text/html', ...noCacheHeaders }); res.end(readFileSync(idx)); }
     else { res.writeHead(404); res.end('Not found'); }
   }
 });
@@ -417,7 +556,9 @@ wss.on('connection', (ws) => {
       const player = room.players[clientId];
       if (!player) return;
       const gs = room.game.stateDict();
-      if (player.side !== gs.currentPlayer) { ws.send(JSON.stringify({ type: 'error', msg: 'not your turn' })); return; }
+      // Compare side: gomoku uses numbers (1=black,2=white), chess/xiangqi uses strings
+      const curName = gs.currentPlayerName ?? gs.currentPlayer;
+      if (player.side !== gs.currentPlayer && player.side !== curName) { ws.send(JSON.stringify({ type: 'error', msg: 'not your turn' })); return; }
       const result = room.game.applyMove(msg.move);
       if (!result.ok) { ws.send(JSON.stringify({ type: 'error', msg: result.reason })); return; }
       room.moves.push({ side: player.side, move: msg.move, ts: Date.now() });

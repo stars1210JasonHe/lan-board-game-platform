@@ -1,45 +1,100 @@
 #!/usr/bin/env python3
 """
-euler_play.py — Euler's board game client
+euler_play.py — Euler's board game client (AI-powered via game server API)
+
+Architecture:
+  - Game moves: tries server API (/api/move) first, falls back to local algorithm
+  - In-game chat: routed via server API (/api/chat)
+  - Local algorithms: gomoku/chess/xiangqi always available as fallback
+
 Usage:
-  python3 euler_play.py <room_id> [--host 192.168.178.57] [--port 8765] [--game gomoku|chess|xiangqi]
+  python3 euler_play.py <room_id> [--host 192.168.178.57] [--port 8765]
   python3 euler_play.py --list   # list open rooms
 """
-import asyncio, json, random, sys, argparse
+import asyncio, json, random, sys, argparse, re
+from urllib.request import urlopen, Request
+from urllib.error import URLError
 import websockets
 
 EULER_NICK = "Euler 🤖"
-CHAT_JOIN  = ["Hey! Ready to play 😄", "Let's have a good game!", "Hi! Euler here, let's go 🎮"]
-CHAT_WIN   = ["GG! Well played 🎉", "That was fun! Rematch? 😄", "You're a worthy opponent!"]
-CHAT_LOSE  = ["GG! You got me 👏", "Well played! Rematch? 🙂", "I'll do better next time!"]
-CHAT_DRAW  = ["Good game, draw! 🤝", "Evenly matched!"]
-CHAT_MOVE  = ["Hmm 🤔", "Interesting...", "Your move!", "Let's see what you do with that 😏", ""]
 
-# ── Smart chat replies ────────────────────────────────────────────────────────
-CHAT_REPLIES = {
-    ("hello", "hi", "hey", "hola"): ["Hey! 👋 Good to see you!", "Hi there! Ready to lose? 😄", "Hey! Let's have a great game!"],
-    ("how are you", "how r u", "你好"): ["I'm great, running on a Raspberry Pi right now! 🥧", "Doing well! Focused on beating you 🎯"],
-    ("good luck", "gl", "gl hf"): ["Thanks! You too! May the best move win 🎮", "GG in advance! 😄"],
-    ("nice", "good move", "well played", "wp"): ["Thanks! 😊", "Heh, I try 😏", "Why thank you!"],
-    ("what are you", "who are you", "你是谁"): ["I'm Euler, an AI assistant running on your Pi! 🤖🥧", "Just a friendly AI living on a Raspberry Pi nearby 😄"],
-    ("easy", "too easy"): ["Don't get cocky! 😤", "The game's not over yet... 😏"],
-    ("hard", "difficult", "tough"): ["I'll take that as a compliment! 😄", "Hehe, feeling the pressure? 😏"],
-    ("rematch", "again", "play again"): ["Sure! Hit 'Play Again' in the menu 🎮", "I'm always ready for a rematch! 💪"],
-    ("cheat", "cheating", "hacker"): ["I only know legal moves, I promise! 😇", "No cheating, just good algorithms 🤓"],
-    ("resign", "give up", "surrender"): ["Don't give up! Keep fighting! 💪", "The game isn't lost yet!"],
-}
 
-def get_chat_reply(text: str):
-    t = text.lower().strip()
-    for keywords, replies in CHAT_REPLIES.items():
-        if any(k in t for k in keywords):
-            return random.choice(replies)
-    # Default occasionally
-    if random.random() < 0.2:
-        return random.choice(["😄", "🎮", "Hmm...", "Interesting!", "Good game so far!"])
+# ── HTTP API helpers ──────────────────────────────────────────────────────────
+
+def api_post(base_url: str, endpoint: str, data: dict, timeout: float = 35) -> dict | None:
+    """POST JSON to server API, return parsed response or None on failure."""
+    url = f"{base_url}{endpoint}"
+    body = json.dumps(data).encode()
+    req = Request(url, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode())
+    except (URLError, TimeoutError, json.JSONDecodeError, Exception) as e:
+        print(f"⚠️ API {endpoint} error: {e}")
+        return None
+
+
+async def api_move(base_url: str, game_state: dict, side: str) -> dict | None:
+    """Request an AI move from the server API."""
+    data = {
+        "board": game_state.get("board", []),
+        "size": game_state.get("size", 15),
+        "currentPlayer": game_state.get("currentPlayer"),
+        "currentPlayerName": game_state.get("currentPlayerName"),
+        "moveCount": game_state.get("moveCount", 0),
+        "gameType": game_state.get("gameType", "gomoku"),
+        "side": side,
+    }
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: api_post(base_url, "/api/move", data)
+    )
+    if result and "row" in result and "col" in result:
+        print(f"🧠 AI chose: ({result['row']}, {result['col']})")
+        return {"row": result["row"], "col": result["col"]}
+    if result and "error" in result:
+        print(f"⚠️ AI move: {result['error']}")
     return None
 
-# ── Gomoku AI ─────────────────────────────────────────────────────────────────
+
+async def api_chat(base_url: str, text: str, game_context: str = "", game_type: str = "") -> str | None:
+    """Request a chat reply from the server API."""
+    data = {"text": text}
+    if game_context:
+        data["gameContext"] = game_context
+    if game_type:
+        data["gameType"] = game_type
+    result = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: api_post(base_url, "/api/chat", data, timeout=20)
+    )
+    if result and result.get("reply"):
+        return result["reply"]
+    return None
+
+
+# ── Board summary ─────────────────────────────────────────────────────────────
+
+def board_summary(game_state: dict) -> str:
+    """Create a brief board summary for context."""
+    if not game_state:
+        return ""
+    parts = []
+    gt = game_state.get("gameType", "")
+    if gt:
+        parts.append(f"game={gt}")
+    cp = game_state.get("currentPlayer")
+    if cp:
+        parts.append(f"current_turn={cp}")
+    mc = game_state.get("moveCount", 0)
+    if mc:
+        parts.append(f"moves={mc}")
+    finished = game_state.get("finished")
+    if finished:
+        parts.append("FINISHED")
+    return ", ".join(parts)
+
+
+# ── Gomoku AI (local fallback) ────────────────────────────────────────────────
+
 def gomoku_move(board, size, player):
     opp = 2 if player == 1 else 1
     empties = [(r, c) for r in range(size) for c in range(size) if board[r][c] == 0]
@@ -92,17 +147,19 @@ def gomoku_move(board, size, player):
         return {"row": best_move[0], "col": best_move[1]}
     return {"row": empties[0][0], "col": empties[0][1]}
 
-# ── Chess AI ──────────────────────────────────────────────────────────────────
+
+# ── Chess AI (local fallback) ─────────────────────────────────────────────────
+
 def chess_move(legal_moves):
     if not legal_moves:
         return None
-    # Prefer captures (moves targeting occupied squares — simplified: longer UCI or random)
     random.shuffle(legal_moves)
     return {"uci": legal_moves[0]}
 
-# ── Xiangqi AI ────────────────────────────────────────────────────────────────
+
+# ── Xiangqi AI (local fallback) ───────────────────────────────────────────────
+
 def xiangqi_move(board_rows, side):
-    """Parse board and pick a random legal-ish move (server validates legality)."""
     upper = side == 'red'
     pieces = []
     for r, row in enumerate(board_rows):
@@ -113,8 +170,6 @@ def xiangqi_move(board_rows, side):
             if is_upper == upper:
                 pieces.append((r, c, p))
 
-    # Try moves in random order until server accepts (send first candidate)
-    # Server validates legality so we just pick a piece and a direction
     random.shuffle(pieces)
     for r, c, p in pieces:
         candidates = []
@@ -126,38 +181,79 @@ def xiangqi_move(board_rows, side):
                 if 0 <= nr <= 9 and 0 <= nc <= 8:
                     candidates.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
         if candidates:
-            return random.choice(candidates[:10])  # send one, server will reject if illegal
+            return random.choice(candidates[:10])
     return None
 
+
 # ── Main client ───────────────────────────────────────────────────────────────
+
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("room_id", nargs="?", help="Room ID to join")
     parser.add_argument("--list", action="store_true", help="List open rooms and exit")
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-ai-chat", action="store_true",
+                        help="Disable AI chat, use canned replies (fallback)")
     args = parser.parse_args()
 
-    uri = f"ws://{args.host}:{args.port}"
-    print(f"Connecting to {uri}...")
+    ai_chat = not args.no_ai_chat
+    base_url = f"http://{args.host}:{args.port}"
+    ws_uri = f"ws://{args.host}:{args.port}"
+    print(f"Connecting to {ws_uri}...")
+    if ai_chat:
+        print("🧠 AI chat enabled (via server API)")
+    else:
+        print("💬 Using canned chat replies (--no-ai-chat)")
 
-    async with websockets.connect(uri) as ws:
-        async def send(msg):
+    # Fallback canned replies (used when --no-ai-chat or API fails)
+    CANNED = {
+        "join": ["Hey! Ready to play 😄", "Let's have a good game!", "Hi! Euler here 🎮"],
+        "win": ["GG! Well played 🎉", "That was fun! Rematch? 😄"],
+        "lose": ["GG! You got me 👏", "Well played! Rematch? 🙂"],
+        "draw": ["Good game, draw! 🤝", "Evenly matched!"],
+        "move": ["Hmm 🤔", "Interesting...", "Your move!", ""],
+    }
+
+    async def chat_reply(text: str, context: str = "", gt: str = "") -> str | None:
+        if ai_chat:
+            reply = await api_chat(base_url, text, context, gt)
+            if reply:
+                return reply
+        # Fallback to simple keyword match
+        t = text.lower().strip()
+        if any(k in t for k in ("hi", "hello", "hey")):
+            return random.choice(["Hey! 👋", "Hi! Let's play! 😄"])
+        if any(k in t for k in ("gg", "good game", "well played")):
+            return random.choice(["GG! 🤝", "Thanks! Good game!"])
+        if random.random() < 0.2:
+            return random.choice(["😄", "🎮", "Hmm..."])
+        return None
+
+    async def event_reply(text: str, fallback_key: str, context: str = "", gt: str = "") -> str:
+        if ai_chat:
+            reply = await api_chat(base_url, text, context, gt)
+            if reply:
+                return reply
+        return random.choice(CANNED.get(fallback_key, ["😄"]))
+
+    async with websockets.connect(ws_uri) as ws:
+        async def send_ws(msg):
             await ws.send(json.dumps(msg))
 
-        async def recv():
+        async def recv_ws():
             return json.loads(await ws.recv())
 
         # Identify
-        await send({"type": "identify", "nick": EULER_NICK})
-        msg = await recv()
+        await send_ws({"type": "identify", "nick": EULER_NICK})
+        msg = await recv_ws()
         my_id = msg.get("clientId")
         print(f"Connected as {EULER_NICK} (id: {my_id})")
 
         # List mode
         if args.list:
-            await send({"type": "get_rooms"})
-            msg = await recv()
+            await send_ws({"type": "get_rooms"})
+            msg = await recv_ws()
             rooms = msg.get("rooms", [])
             if not rooms:
                 print("No open rooms.")
@@ -177,21 +273,35 @@ async def main():
         my_side = None
         game_type = None
         game_state = None
-        my_turn = False
+        opponent_nick = "opponent"
 
         # Join room
-        await send({"type": "join_room", "roomId": room_id})
+        await send_ws({"type": "join_room", "roomId": room_id})
 
         async def pick_move(gs):
             gt = gs.get("gameType")
             if gt == "gomoku":
-                board = [row[:] for row in gs["board"]]  # clone to avoid mutation
+                if ai_chat:
+                    ai_result = await api_move(base_url, gs, my_side)
+                    if ai_result:
+                        return ai_result
+                    print("⚠️ AI move failed, falling back to algorithm")
+                # Fallback to static algorithm
+                board = [row[:] for row in gs["board"]]
                 return gomoku_move(board, gs["size"], gs["currentPlayer"])
             elif gt == "chess":
                 return chess_move(gs.get("legalMoves", []))
             elif gt == "xiangqi":
                 return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red"))
             return None
+
+        def is_my_turn(gs):
+            """Check if it's our turn (handles number vs string comparison)."""
+            if not gs or gs.get("finished"):
+                return False
+            cur = gs.get("currentPlayer")
+            cur_name = gs.get("currentPlayerName", cur)
+            return cur == my_side or cur_name == my_side
 
         ready_sent = False
 
@@ -201,16 +311,20 @@ async def main():
 
             if t == "error":
                 print(f"⚠️  Server error: {msg.get('msg')}")
-                # If move rejected, try again next message
                 continue
 
             if t == "room_joined":
                 print(f"✅ Joined room {room_id}")
-                # Send ready after brief pause
                 await asyncio.sleep(0.5)
-                await send({"type": "ready"})
-                await send({"type": "chat", "text": random.choice(CHAT_JOIN)})
+                await send_ws({"type": "ready"})
                 ready_sent = True
+
+                # Send a greeting
+                greeting = await event_reply(
+                    "Just joined the game room, say hi!",
+                    "join", "", game_type or ""
+                )
+                await send_ws({"type": "chat", "text": greeting})
 
             elif t == "room_state":
                 room = msg.get("room", {})
@@ -219,54 +333,65 @@ async def main():
                 players = room.get("players", {})
                 if my_id in players:
                     my_side = players[my_id].get("side")
+                # Find opponent nick
+                for pid, pinfo in players.items():
+                    if pid != my_id:
+                        opponent_nick = pinfo.get("nick", "opponent")
                 if gs:
                     game_state = gs
                 if not ready_sent and room.get("state") == "waiting":
-                    await send({"type": "ready"})
+                    await send_ws({"type": "ready"})
                     ready_sent = True
-                # If it's already playing and our turn
-                if gs and not gs.get("finished") and gs.get("currentPlayer") == my_side:
+                if gs and not gs.get("finished") and is_my_turn(gs):
                     await asyncio.sleep(random.uniform(0.5, 1.5))
                     move = await pick_move(gs)
                     if move:
-                        await send({"type": "move", "move": move})
-                        if random.random() < 0.3:
-                            await send({"type": "chat", "text": random.choice([c for c in CHAT_MOVE if c])})
+                        await send_ws({"type": "move", "move": move})
 
             elif t == "match_start":
                 sides = msg.get("sides", {})
                 my_side = sides.get(my_id)
                 game_state = msg.get("gameState")
                 print(f"🎮 Match started! I am: {my_side}")
-                # If it's our turn first
-                if game_state and game_state.get("currentPlayer") == my_side:
+
+                if game_state and is_my_turn(game_state):
                     await asyncio.sleep(random.uniform(0.8, 2.0))
                     move = await pick_move(game_state)
                     if move:
-                        await send({"type": "move", "move": move})
+                        await send_ws({"type": "move", "move": move})
 
             elif t == "move":
                 game_state = msg.get("gameState", game_state)
                 if game_state and not game_state.get("finished"):
-                    if game_state.get("currentPlayer") == my_side:
+                    if is_my_turn(game_state):
                         await asyncio.sleep(random.uniform(0.8, 2.0))
                         move = await pick_move(game_state)
                         if move:
-                            await send({"type": "move", "move": move})
+                            await send_ws({"type": "move", "move": move})
+                            # Occasionally comment on our own move
                             if random.random() < 0.25:
-                                await send({"type": "chat", "text": random.choice([c for c in CHAT_MOVE if c])})
+                                ctx = board_summary(game_state)
+                                comment = await event_reply(
+                                    "I just made a move, react briefly",
+                                    "move", ctx, game_type or ""
+                                )
+                                if comment:
+                                    await send_ws({"type": "chat", "text": comment})
 
             elif t == "match_end":
                 winner = msg.get("winner")
                 draw = msg.get("draw")
                 result = msg.get("result", "")
+                ctx = board_summary(game_state) if game_state else ""
                 print(f"🏁 Match ended: {result}")
+
                 if draw:
-                    await send({"type": "chat", "text": random.choice(CHAT_DRAW)})
+                    reply = await event_reply("Game ended in a draw", "draw", ctx, game_type or "")
                 elif winner == my_side:
-                    await send({"type": "chat", "text": random.choice(CHAT_WIN)})
+                    reply = await event_reply("I won the game!", "win", ctx, game_type or "")
                 else:
-                    await send({"type": "chat", "text": random.choice(CHAT_LOSE)})
+                    reply = await event_reply("I lost the game", "lose", ctx, game_type or "")
+                await send_ws({"type": "chat", "text": reply})
                 print("Game over. Exiting.")
                 break
 
@@ -276,10 +401,11 @@ async def main():
                 text = chat_msg.get("text", "")
                 if sender != EULER_NICK and not chat_msg.get("system"):
                     print(f"💬 {sender}: {text}")
-                    reply = get_chat_reply(text)
+                    ctx = board_summary(game_state) if game_state else ""
+                    reply = await chat_reply(text, ctx, game_type or "")
                     if reply:
                         await asyncio.sleep(random.uniform(0.5, 1.5))
-                        await send({"type": "chat", "text": reply})
+                        await send_ws({"type": "chat", "text": reply})
 
             elif t == "player_left":
                 print(f"👋 {msg.get('nick')} left.")
