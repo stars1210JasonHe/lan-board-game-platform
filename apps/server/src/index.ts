@@ -285,7 +285,7 @@ const httpServer = createServer((req, res) => {
     return;
   }
   // Serve static
-  let path = req.url === '/' ? '/index.html' : (req.url ?? '/index.html');
+  let rawPath = req.url === '/' ? '/index.html' : (req.url ?? '/index.html'); let path = rawPath.replace(/\.\.[\/]/g, '').replace(/^\/+/, '/');
   const filePath = join(staticDir, path);
   try {
     const content = readFileSync(filePath);
@@ -447,7 +447,7 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => { clients.delete(clientId); handleLeave(clientId, nick); });
-  ws.on('error', () => { clients.delete(clientId); });
+  ws.on('error', () => { clients.delete(clientId); handleLeave(clientId, nick); });
 });
 
 httpServer.listen(PORT, '0.0.0.0', () => {
