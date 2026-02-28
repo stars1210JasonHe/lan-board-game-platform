@@ -171,13 +171,15 @@ function bestGomokuMove(game: any): any {
   // Check for wins / blocks
   for (const move of moves) {
     board[move.row][move.col] = player;
-    if (game['checkWin']?.(move.row, move.col, player)) { board[move.row][move.col] = 0; return move; }
+    const won = game['checkWin']?.(move.row, move.col, player) ?? false;
     board[move.row][move.col] = 0;
+    if (won) return move;
   }
   for (const move of moves) {
     board[move.row][move.col] = opp;
-    if (game['checkWin']?.(move.row, move.col, opp)) { board[move.row][move.col] = 0; return move; }
+    const blocked = game['checkWin']?.(move.row, move.col, opp) ?? false;
     board[move.row][move.col] = 0;
+    if (blocked) return move;
   }
   // Prefer center
   const center = size >> 1;
