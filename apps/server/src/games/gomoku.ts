@@ -56,6 +56,15 @@ export class GomokuGame {
     return false;
   }
 
+  resign(side: string) {
+    if (this.finished) return { ok: false };
+    this.finished = true;
+    // side is 'black' or 'white'; map to player number
+    const resigned = side === 'black' ? BLACK : WHITE;
+    this.winner = resigned === BLACK ? WHITE : BLACK;
+    return { ok: true, winner: this.winner === BLACK ? 'black' : 'white', reason: 'resignation' };
+  }
+
   stateDict() {
     return {
       gameType: 'gomoku',

@@ -213,7 +213,18 @@ async function handleMatchEnd(room: any, result: any) {
   const game = room.game;
   const endedAt = new Date().toISOString();
 
-  const winner = result.winner ?? game.winner ?? null;
+  let winner = result.winner ?? game.winner ?? null;
+  // Gomoku stores winner as 1/2 (number) — convert to side name
+  if (winner === 1 || winner === 2) {
+    const sides = Object.entries<any>(room.players).find(([,p]) => true)?.[1]?.side;
+    // Find player with this number
+    const winnerEntry = Object.values<any>(room.players).find((p:any) => {
+      if (p.side === 'black' && winner === 1) return true;
+      if (p.side === 'white' && winner === 2) return true;
+      return false;
+    });
+    winner = winnerEntry?.side ?? (winner === 1 ? 'black' : 'white');
+  }
   const draw = result.draw ?? false;
   const reason = result.reason ?? game.winnerReason ?? 'unknown';
 
