@@ -177,7 +177,13 @@ function handleMsg(msg) {
   if (msg.type === 'rooms_list') renderRooms(msg.rooms);
   if (msg.type === 'room_joined') { myRoom = msg.roomId; showScreen('room'); }
   if (msg.type === 'room_state') updateRoomState(msg.room);
-  if (msg.type === 'match_start') { mySide = null; showScreen('match'); }
+  if (msg.type === 'match_start') {
+    const sides = msg.sides || {};
+    mySide = sides[clientId] || null;
+    gameState = msg.gameState;
+    showScreen('match');
+    renderBoard(); updateTurn();
+  }
   if (msg.type === 'move') { gameState = msg.gameState; renderBoard(); updateTurn(); addMove(msg); }
   if (msg.type === 'chat') appendChat(msg.message);
   if (msg.type === 'match_end') showEndModal(msg);

@@ -260,7 +260,14 @@ async function handleLeave(clientId: string, nick: string) {
   const humans = Object.keys(room.players).filter(id => !id.startsWith('AI_'));
   if (humans.length === 0) {
     const t = aiTimers.get(roomId); if (t) clearTimeout(t); aiTimers.delete(roomId);
-    rooms.delete(roomId);
+    // Grace period: keep room alive 60s in case player refreshes
+    setTimeout(() => {
+      const r2 = rooms.get(roomId);
+      if (r2 && Object.keys(r2.players).filter(id => !id.startsWith('AI_')).length === 0) {
+        rooms.delete(roomId);
+        broadcastRoomsUpdate();
+      }
+    }, 60_000);
   } else {
     const msg = addChat(room, 'System', `${nick} left the room.`, true);
     await broadcast(room, { type: 'chat', message: msg });

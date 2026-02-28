@@ -15,6 +15,30 @@ CHAT_LOSE  = ["GG! You got me 👏", "Well played! Rematch? 🙂", "I'll do bett
 CHAT_DRAW  = ["Good game, draw! 🤝", "Evenly matched!"]
 CHAT_MOVE  = ["Hmm 🤔", "Interesting...", "Your move!", "Let's see what you do with that 😏", ""]
 
+# ── Smart chat replies ────────────────────────────────────────────────────────
+CHAT_REPLIES = {
+    ("hello", "hi", "hey", "hola"): ["Hey! 👋 Good to see you!", "Hi there! Ready to lose? 😄", "Hey! Let's have a great game!"],
+    ("how are you", "how r u", "你好"): ["I'm great, running on a Raspberry Pi right now! 🥧", "Doing well! Focused on beating you 🎯"],
+    ("good luck", "gl", "gl hf"): ["Thanks! You too! May the best move win 🎮", "GG in advance! 😄"],
+    ("nice", "good move", "well played", "wp"): ["Thanks! 😊", "Heh, I try 😏", "Why thank you!"],
+    ("what are you", "who are you", "你是谁"): ["I'm Euler, an AI assistant running on your Pi! 🤖🥧", "Just a friendly AI living on a Raspberry Pi nearby 😄"],
+    ("easy", "too easy"): ["Don't get cocky! 😤", "The game's not over yet... 😏"],
+    ("hard", "difficult", "tough"): ["I'll take that as a compliment! 😄", "Hehe, feeling the pressure? 😏"],
+    ("rematch", "again", "play again"): ["Sure! Hit 'Play Again' in the menu 🎮", "I'm always ready for a rematch! 💪"],
+    ("cheat", "cheating", "hacker"): ["I only know legal moves, I promise! 😇", "No cheating, just good algorithms 🤓"],
+    ("resign", "give up", "surrender"): ["Don't give up! Keep fighting! 💪", "The game isn't lost yet!"],
+}
+
+def get_chat_reply(text: str):
+    t = text.lower().strip()
+    for keywords, replies in CHAT_REPLIES.items():
+        if any(k in t for k in keywords):
+            return random.choice(replies)
+    # Default occasionally
+    if random.random() < 0.2:
+        return random.choice(["😄", "🎮", "Hmm...", "Interesting!", "Good game so far!"])
+    return None
+
 # ── Gomoku AI ─────────────────────────────────────────────────────────────────
 def gomoku_move(board, size, player):
     opp = 2 if player == 1 else 1
@@ -248,8 +272,14 @@ async def main():
 
             elif t == "chat":
                 chat_msg = msg.get("message", {})
-                if chat_msg.get("nick") != EULER_NICK:
-                    print(f"💬 {chat_msg.get('nick')}: {chat_msg.get('text')}")
+                sender = chat_msg.get("nick", "")
+                text = chat_msg.get("text", "")
+                if sender != EULER_NICK and not chat_msg.get("system"):
+                    print(f"💬 {sender}: {text}")
+                    reply = get_chat_reply(text)
+                    if reply:
+                        await asyncio.sleep(random.uniform(0.5, 1.5))
+                        await send({"type": "chat", "text": reply})
 
             elif t == "player_left":
                 print(f"👋 {msg.get('nick')} left.")
