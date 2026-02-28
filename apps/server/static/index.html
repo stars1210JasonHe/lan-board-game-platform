@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>LAN Board Games</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#eee;min-height:100vh}
+.app{max-width:1200px;margin:0 auto;padding:16px}
+h1{text-align:center;color:#e94560;margin-bottom:24px;font-size:2rem}
+.screen{display:none}.screen.active{display:block}
+/* Lobby */
+.lobby-form{display:flex;gap:8px;margin-bottom:24px;justify-content:center}
+.lobby-form input{padding:10px 16px;border-radius:8px;border:1px solid #333;background:#16213e;color:#eee;font-size:1rem;width:240px}
+.lobby-form select{padding:10px 16px;border-radius:8px;border:1px solid #333;background:#16213e;color:#eee;font-size:1rem}
+.btn{padding:10px 20px;border:none;border-radius:8px;cursor:pointer;font-size:1rem;font-weight:600;transition:opacity 0.2s}
+.btn:hover{opacity:0.85}
+.btn-primary{background:#e94560;color:#fff}
+.btn-secondary{background:#0f3460;color:#eee}
+.btn-success{background:#27ae60;color:#fff}
+.btn-danger{background:#c0392b;color:#fff}
+.btn-small{padding:6px 12px;font-size:0.85rem}
+.rooms-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:16px}
+.room-card{background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:16px;cursor:pointer;transition:border-color 0.2s}
+.room-card:hover{border-color:#e94560}
+.room-card h3{color:#e94560;margin-bottom:8px}
+.room-card .meta{font-size:0.85rem;color:#aaa;margin-bottom:12px}
+.badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:0.75rem;font-weight:600}
+.badge-waiting{background:#0f3460;color:#7ec8e3}
+.badge-playing{background:#27ae60;color:#fff}
+.badge-finished{background:#555;color:#aaa}
+/* Room */
+.room-layout{display:grid;grid-template-columns:1fr 320px;gap:16px}
+.panel{background:#16213e;border:1px solid #0f3460;border-radius:12px;padding:16px}
+.players-list{display:flex;gap:16px;margin-bottom:16px}
+.player-slot{flex:1;background:#0f3460;border-radius:8px;padding:12px;text-align:center;min-height:80px;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.player-slot .nick{font-weight:700;font-size:1.1rem;margin-bottom:4px}
+.player-slot .side{font-size:0.8rem;color:#aaa}
+.player-slot .ready-dot{width:10px;height:10px;border-radius:50%;margin-top:6px}
+.ready-dot.ready{background:#27ae60}.ready-dot.not-ready{background:#c0392b}
+.room-controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+/* Chat */
+.chat-panel{display:flex;flex-direction:column;height:400px}
+.chat-messages{flex:1;overflow-y:auto;background:#0f3460;border-radius:8px;padding:10px;margin-bottom:8px;font-size:0.85rem}
+.chat-msg{margin-bottom:6px;line-height:1.4}
+.chat-msg .sender{font-weight:700;margin-right:4px}
+.chat-msg.system .sender{color:#f39c12}
+.chat-msg.ai .sender{color:#9b59b6}
+.chat-input{display:flex;gap:6px}
+.chat-input input{flex:1;padding:8px 12px;border-radius:6px;border:1px solid #333;background:#16213e;color:#eee}
+/* Match */
+.match-layout{display:grid;grid-template-columns:1fr 320px;gap:16px}
+.board-area{display:flex;flex-direction:column;align-items:center}
+.turn-indicator{background:#0f3460;border-radius:8px;padding:10px 20px;margin-bottom:12px;font-weight:700;text-align:center}
+.board-container{position:relative}
+/* Chess/Gomoku/Xiangqi board */
+canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
+.match-controls{display:flex;gap:8px;margin-top:12px;justify-content:center;flex-wrap:wrap}
+.move-history{max-height:200px;overflow-y:auto;font-size:0.8rem;background:#0f3460;border-radius:6px;padding:8px;margin-top:10px}
+.move-history div{padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+/* End modal */
+.modal{position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:100}
+.modal-box{background:#16213e;border:2px solid #e94560;border-radius:16px;padding:32px;text-align:center;min-width:320px}
+.modal-box h2{color:#e94560;font-size:1.8rem;margin-bottom:12px}
+.modal-box p{color:#aaa;margin-bottom:20px;font-size:1.1rem}
+.modal-box .btns{display:flex;gap:12px;justify-content:center}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="app">
+<h1>🎮 LAN Board Games</h1>
+
+<!-- LOBBY -->
+<div id="screen-lobby" class="screen active">
+  <div class="lobby-form">
+    <input id="nick-input" placeholder="Your nickname" maxlength="20"/>
+    <select id="game-select">
+      <option value="gomoku">Gomoku</option>
+      <option value="chess">Chess</option>
+      <option value="xiangqi">Xiangqi</option>
+    </select>
+    <button class="btn btn-success" onclick="createRoom(false)">Create Room</button>
+    <button class="btn btn-secondary" onclick="createRoom(true)">vs AI</button>
+  </div>
+  <div id="rooms-container" class="rooms-grid"><p style="color:#aaa;text-align:center">No rooms yet.</p></div>
+</div>
+
+<!-- ROOM -->
+<div id="screen-room" class="screen">
+  <div class="room-layout">
+    <div class="panel">
+      <h2 id="room-title">Room</h2>
+      <div class="players-list" id="players-list"></div>
+      <div class="room-controls">
+        <button class="btn btn-success" id="btn-ready" onclick="sendReady()">Ready</button>
+        <button class="btn btn-danger btn-small" onclick="leaveRoom()">Leave Room</button>
+      </div>
+    </div>
+    <div class="panel chat-panel">
+      <h3>Chat</h3>
+      <div class="chat-messages" id="chat-room"></div>
+      <div class="chat-input">
+        <input id="chat-room-input" placeholder="Message..." onkeydown="if(event.key==='Enter')sendChat('room')"/>
+        <button class="btn btn-secondary btn-small" onclick="sendChat('room')">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- MATCH -->
+<div id="screen-match" class="screen">
+  <div class="match-layout">
+    <div class="panel board-area">
+      <div class="turn-indicator" id="turn-indicator">Waiting...</div>
+      <canvas id="board-canvas" width="600" height="600"></canvas>
+      <div class="match-controls">
+        <button class="btn btn-danger btn-small" onclick="resign()">Resign</button>
+        <button class="btn btn-secondary btn-small" onclick="leaveRoom()">Exit</button>
+      </div>
+      <div class="move-history" id="move-history"></div>
+    </div>
+    <div class="panel chat-panel">
+      <h3>Chat</h3>
+      <div class="chat-messages" id="chat-match"></div>
+      <div class="chat-input">
+        <input id="chat-match-input" placeholder="Message..." onkeydown="if(event.key==='Enter')sendChat('match')"/>
+        <button class="btn btn-secondary btn-small" onclick="sendChat('match')">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- END MODAL -->
+<div id="end-modal" class="modal hidden">
+  <div class="modal-box">
+    <h2 id="end-title">Game Over</h2>
+    <p id="end-desc"></p>
+    <div class="btns">
+      <button class="btn btn-success" onclick="playAgain()">Play Again</button>
+      <button class="btn btn-secondary" onclick="leaveRoom()">Exit Room</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const WS_URL = `ws://${location.host}`;
+let ws = null, clientId = null, myNick = '', myRoom = null, mySide = null;
+let gameType = 'gomoku', gameState = null, selectedFrom = null;
+
+// ── Nick persistence ──────────────────────────────────────────────────────────
+window.onload = () => {
+  const saved = localStorage.getItem('bgp_nick');
+  if (saved) document.getElementById('nick-input').value = saved;
+  connect();
+};
+
+function getNick() {
+  const n = document.getElementById('nick-input').value.trim() || 'Player';
+  localStorage.setItem('bgp_nick', n);
+  return n;
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => { myNick = getNick(); ws.send(JSON.stringify({ type: 'identify', nick: myNick })); };
+  ws.onmessage = e => handleMsg(JSON.parse(e.data));
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+
+function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
+
+function handleMsg(msg) {
+  if (msg.type === 'identified') { clientId = msg.clientId; }
+  if (msg.type === 'rooms_list') renderRooms(msg.rooms);
+  if (msg.type === 'room_joined') { myRoom = msg.roomId; showScreen('room'); }
+  if (msg.type === 'room_state') updateRoomState(msg.room);
+  if (msg.type === 'match_start') { mySide = null; showScreen('match'); }
+  if (msg.type === 'move') { gameState = msg.gameState; renderBoard(); updateTurn(); addMove(msg); }
+  if (msg.type === 'chat') appendChat(msg.message);
+  if (msg.type === 'match_end') showEndModal(msg);
+  if (msg.type === 'player_ready') {}
+  if (msg.type === 'player_left') appendChat({ nick:'System', text:`${msg.nick} left.`, system:true });
+  if (msg.type === 'error') console.warn('Server error:', msg.msg);
+}
+
+// ── Screens ───────────────────────────────────────────────────────────────────
+function showScreen(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  document.getElementById('end-modal')?.classList.add('hidden');
+}
+
+// ── Lobby ─────────────────────────────────────────────────────────────────────
+function renderRooms(rooms) {
+  const el = document.getElementById('rooms-container');
+  if (!rooms.length) { el.innerHTML = '<p style="color:#aaa;text-align:center">No rooms yet. Create one!</p>'; return; }
+  el.innerHTML = rooms.map(r => `
+    <div class="room-card" onclick="joinRoom('${r.id}')">
+      <h3>${r.gameType.toUpperCase()}</h3>
+      <div class="meta">Room: ${r.id} · ${r.playerCount}/2 players</div>
+      <div>${r.players.map(p=>`<span style="margin-right:8px">👤 ${p.nick}${p.isAi?' 🤖':''}</span>`).join('')}</div>
+      <div style="margin-top:8px"><span class="badge badge-${r.state}">${r.state}</span></div>
+    </div>
+  `).join('');
+}
+
+function createRoom(withAi) {
+  myNick = getNick();
+  gameType = document.getElementById('game-select').value;
+  ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
+  send({ type: 'create_room', gameType, withAi });
+}
+
+function joinRoom(roomId) {
+  myNick = getNick();
+  ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
+  send({ type: 'join_room', roomId });
+}
+
+function leaveRoom() {
+  send({ type: 'leave_room' });
+  myRoom = null; mySide = null; gameState = null;
+  showScreen('lobby');
+  document.getElementById('end-modal').classList.add('hidden');
+}
+
+// ── Room ──────────────────────────────────────────────────────────────────────
+function updateRoomState(room) {
+  document.getElementById('room-title').textContent = `Room: ${room.id} (${room.gameType})`;
+  gameType = room.gameType;
+  gameState = room.gameState;
+
+  if (room.state === 'playing' && gameState) {
+    showScreen('match');
+    // Find our side
+    if (!mySide) {
+      const me = room.players[clientId];
+      if (me) mySide = me.side;
+    }
+    renderBoard(); updateTurn();
+  }
+
+  const pl = document.getElementById('players-list');
+  const pArr = Object.entries(room.players);
+  pl.innerHTML = pArr.map(([id, p]) => `
+    <div class="player-slot">
+      <div class="nick">${p.nick}${p.isAi?' 🤖':''}</div>
+      <div class="side">${p.side ?? '—'}</div>
+      <div class="ready-dot ${p.ready?'ready':'not-ready'}"></div>
+    </div>
+  `).join('') || '<div class="player-slot"><div class="nick" style="color:#aaa">Waiting...</div></div>';
+
+  // Set our side
+  const me = room.players[clientId];
+  if (me) mySide = me.side;
+
+  // Update ready button
+  if (me) document.getElementById('btn-ready').textContent = me.ready ? 'Unready' : 'Ready';
+
+  // Replay chat
+  const chatEl = document.getElementById('chat-room');
+  chatEl.innerHTML = '';
+  (room.chat ?? []).forEach(m => appendChat(m, 'room'));
+}
+
+function sendReady() { send({ type: 'ready' }); }
+
+// ── Chat ──────────────────────────────────────────────────────────────────────
+function appendChat(msg, scope) {
+  const ids = ['chat-room','chat-match'];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const div = document.createElement('div');
+    div.className = `chat-msg${msg.system?' system':''}${msg.isAi?' ai':''}`;
+    div.innerHTML = `<span class="sender" style="color:${msg.system?'#f39c12':msg.isAi?'#9b59b6':'#7ec8e3'}">${msg.nick}:</span> ${escHtml(msg.text)}`;
+    el.appendChild(div);
+    el.scrollTop = el.scrollHeight;
+  });
+}
+
+function escHtml(s) { return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function sendChat(scope) {
+  const id = scope === 'room' ? 'chat-room-input' : 'chat-match-input';
+  const text = document.getElementById(id).value.trim();
+  if (!text) return;
+  send({ type: 'chat', text });
+  document.getElementById(id).value = '';
+}
+
+// ── Match ─────────────────────────────────────────────────────────────────────
+function updateTurn() {
+  if (!gameState) return;
+  const el = document.getElementById('turn-indicator');
+  const cur = gameState.currentPlayer;
+  const isMyTurn = cur === mySide;
+  el.textContent = isMyTurn ? `Your turn (${mySide})` : `${gameState.currentPlayerName}'s turn`;
+  el.style.background = isMyTurn ? '#27ae60' : '#0f3460';
+}
+
+function addMove(msg) {
+  const el = document.getElementById('move-history');
+  const div = document.createElement('div');
+  div.textContent = `${msg.side}: ${JSON.stringify(msg.move)}`;
+  el.appendChild(div); el.scrollTop = el.scrollHeight;
+}
+
+function resign() { if (confirm('Resign?')) send({ type: 'resign' }); }
+function playAgain() { send({ type: 'play_again' }); document.getElementById('end-modal').classList.add('hidden'); }
+
+function showEndModal(msg) {
+  document.getElementById('end-modal').classList.remove('hidden');
+  document.getElementById('end-title').textContent = msg.draw ? 'Draw!' : `${msg.winner ? msg.winner.toUpperCase() : ''} Wins!`;
+  document.getElementById('end-desc').textContent = msg.result;
+  renderBoard();
+}
+
+// ── Board Rendering ───────────────────────────────────────────────────────────
+const canvas = document.getElementById('board-canvas');
+const ctx = canvas.getContext('2d');
+canvas.onclick = e => onBoardClick(e);
+
+function renderBoard() {
+  if (!gameState) return;
+  const gt = gameState.gameType;
+  if (gt === 'gomoku') renderGomoku();
+  else if (gt === 'chess') renderChess();
+  else renderXiangqi();
+}
+
+// ── Gomoku ────────────────────────────────────────────────────────────────────
+function renderGomoku() {
+  const size = 15, cell = Math.floor(600/16), pad = cell;
+  canvas.width = canvas.height = pad*2 + cell*(size-1);
+  ctx.fillStyle = '#d4a96a';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1;
+  for (let i=0;i<size;i++) {
+    ctx.beginPath(); ctx.moveTo(pad+i*cell,pad); ctx.lineTo(pad+i*cell,pad+(size-1)*cell); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pad,pad+i*cell); ctx.lineTo(pad+(size-1)*cell,pad+i*cell); ctx.stroke();
+  }
+  // Star points
+  for (const [r,c] of [[3,3],[3,11],[7,7],[11,3],[11,11]]) {
+    ctx.beginPath(); ctx.arc(pad+c*cell,pad+r*cell,4,0,Math.PI*2); ctx.fillStyle='#333'; ctx.fill();
+  }
+  const board = gameState.board;
+  for (let r=0;r<size;r++) for (let c=0;c<size;c++) {
+    if (!board[r][c]) continue;
+    ctx.beginPath(); ctx.arc(pad+c*cell,pad+r*cell,cell/2-2,0,Math.PI*2);
+    ctx.fillStyle = board[r][c]===1?'#111':'#f5f5f5';
+    ctx.fill(); ctx.strokeStyle='#888'; ctx.lineWidth=1; ctx.stroke();
+  }
+}
+
+function onGomokuClick(x,y) {
+  const size=15, cell=Math.floor(600/16), pad=cell;
+  const c=Math.round((x-pad)/cell), r=Math.round((y-pad)/cell);
+  if (r<0||r>=size||c<0||c>=size) return;
+  send({ type:'move', move:{row:r,col:c} });
+}
+
+// ── Chess ─────────────────────────────────────────────────────────────────────
+const CHESS_PIECES = {K:'♔',Q:'♕',R:'♖',B:'♗',N:'♘',P:'♙',k:'♚',q:'♛',r:'♜',b:'♝',n:'♞',p:'♟'};
+
+function renderChess() {
+  canvas.width = canvas.height = 600;
+  const cell = 75;
+  for (let r=0;r<8;r++) for (let c=0;c<8;c++) {
+    ctx.fillStyle = (r+c)%2===0?'#f0d9b5':'#b58863';
+    ctx.fillRect(c*cell,r*cell,cell,cell);
+  }
+  if (selectedFrom) {
+    const [fr,fc] = selectedFrom;
+    ctx.fillStyle='rgba(255,255,0,0.4)'; ctx.fillRect(fc*cell,fr*cell,cell,cell);
+  }
+  // Parse FEN to render pieces
+  const fen = gameState.fen;
+  if (!fen) return;
+  const rows = fen.split(' ')[0].split('/');
+  ctx.font = `${cell*0.75}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  rows.forEach((row,r) => {
+    let c=0;
+    for (const ch of row) {
+      if (isNaN(+ch)) {
+        ctx.fillStyle = ch===ch.toUpperCase()?'#fff':'#111';
+        ctx.strokeStyle = ch===ch.toUpperCase()?'#333':'#aaa';
+        ctx.lineWidth=1;
+        ctx.strokeText(CHESS_PIECES[ch]||ch, c*cell+cell/2, r*cell+cell/2);
+        ctx.fillText(CHESS_PIECES[ch]||ch, c*cell+cell/2, r*cell+cell/2);
+        c++;
+      } else c+=+ch;
+    }
+  });
+  // Labels
+  ctx.fillStyle='#666'; ctx.font='12px sans-serif';
+  'abcdefgh'.split('').forEach((l,i)=>{ctx.textAlign='center';ctx.fillText(l,i*cell+cell/2,595);});
+  for(let i=0;i<8;i++){ctx.textAlign='left';ctx.fillText(8-i,2,i*cell+cell/2);}
+}
+
+function onChessClick(x,y) {
+  const cell=75;
+  const c=Math.floor(x/cell), r=Math.floor(y/cell);
+  const sq = 'abcdefgh'[c] + (8-r);
+  if (!selectedFrom) { selectedFrom=[r,c,sq]; renderBoard(); return; }
+  const fromSq = selectedFrom[2];
+  if (fromSq===sq) { selectedFrom=null; renderBoard(); return; }
+  send({ type:'move', move:{ uci: fromSq+sq } });
+  selectedFrom=null;
+}
+
+// ── Xiangqi ───────────────────────────────────────────────────────────────────
+const XPIECES = {K:'将',k:'帅',A:'士',a:'仕',B:'象',b:'相',N:'马',n:'馬',R:'车',r:'車',C:'炮',c:'砲',P:'卒',p:'兵',' ':''};
+
+function renderXiangqi() {
+  const cols=9,rows=10,cell=60,padX=30,padY=30;
+  canvas.width=padX*2+cell*(cols-1); canvas.height=padY*2+cell*(rows-1);
+  ctx.fillStyle='#f5deb3'; ctx.fillRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='#333'; ctx.lineWidth=1;
+  for(let r=0;r<rows;r++){ctx.beginPath();ctx.moveTo(padX,padY+r*cell);ctx.lineTo(padX+(cols-1)*cell,padY+r*cell);ctx.stroke();}
+  for(let c=0;c<cols;c++){
+    if(c===0||c===cols-1){ctx.beginPath();ctx.moveTo(padX+c*cell,padY);ctx.lineTo(padX+c*cell,padY+(rows-1)*cell);ctx.stroke();}
+    else{
+      ctx.beginPath();ctx.moveTo(padX+c*cell,padY);ctx.lineTo(padX+c*cell,padY+4*cell);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(padX+c*cell,padY+5*cell);ctx.lineTo(padX+c*cell,padY+(rows-1)*cell);ctx.stroke();
+    }
+  }
+  // River text
+  ctx.fillStyle='#8b4513'; ctx.font='18px serif'; ctx.textAlign='center';
+  ctx.fillText('楚 河',padX+2*cell,padY+4.5*cell);
+  ctx.fillText('汉 界',padX+6*cell,padY+4.5*cell);
+
+  // Draw pieces
+  const board = gameState.board;
+  if(!board) return;
+  board.forEach((rowStr,r)=>{
+    [...rowStr].forEach((p,c)=>{
+      if(p===' ') return;
+      const x=padX+c*cell, y=padY+r*cell;
+      ctx.beginPath(); ctx.arc(x,y,cell/2-3,0,Math.PI*2);
+      ctx.fillStyle=p===p.toUpperCase()?'#cc3300':'#003366';
+      ctx.fill(); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font=`bold ${cell*0.45}px serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(XPIECES[p]||p,x,y);
+    });
+  });
+  if(selectedFrom) {
+    const [fr,fc]=selectedFrom;
+    ctx.strokeStyle='#ff0'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.arc(padX+fc*cell,padY+fr*cell,cell/2-1,0,Math.PI*2); ctx.stroke();
+  }
+}
+
+function onXiangqiClick(x,y) {
+  const cell=60,padX=30,padY=30;
+  const c=Math.round((x-padX)/cell), r=Math.round((y-padY)/cell);
+  if(r<0||r>9||c<0||c>8) return;
+  if(!selectedFrom) { selectedFrom=[r,c]; renderBoard(); return; }
+  const [fr,fc]=selectedFrom;
+  if(fr===r&&fc===c) { selectedFrom=null; renderBoard(); return; }
+  send({ type:'move', move:{fromRow:fr,fromCol:fc,toRow:r,toCol:c} });
+  selectedFrom=null;
+}
+
+function onBoardClick(e) {
+  if(!gameState||gameState.finished) return;
+  if(gameState.currentPlayer!==mySide) return;
+  const rect=canvas.getBoundingClientRect();
+  const x=e.clientX-rect.left, y=e.clientY-rect.top;
+  const sx=canvas.width/rect.width, sy=canvas.height/rect.height;
+  const gt=gameState.gameType;
+  if(gt==='gomoku') onGomokuClick(x*sx,y*sy);
+  else if(gt==='chess') onChessClick(x*sx,y*sy);
+  else onXiangqiClick(x*sx,y*sy);
+}
+</script>
+</body>
+</html>
