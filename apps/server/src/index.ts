@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { execFile } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { GomokuGame, BLACK as GB, WHITE as GW } from './games/gomoku.js';
 import { ChessGame } from './games/chess.js';
@@ -40,11 +40,11 @@ const clientRoom: Map<string, string> = new Map();
 
 function makeRoom(gameType: string, hostId: string, hostNick: string) {
   const id = Math.random().toString(36).slice(2,8).toUpperCase();
-  return { id, gameType, hostId, players: {} as Record<string,any>, state: 'waiting', game: null as any, matchId: null as any, startedAt: null, chat: [] as any[], moves: [] as any[], spectators: [] as string[] };
+  return { id, gameType, hostId, players: {} as Record<string,any>, state: 'waiting', game: null as any, matchId: null as any, startedAt: null, chat: [] as any[], moves: [] as any[], spectators: [] as string[], aiType: 'euler' as string, difficulty: 'medium' as string };
 }
 
 function roomSummary(room: any) {
-  return { id: room.id, gameType: room.gameType, playerCount: Object.keys(room.players).length, state: room.state, players: Object.values(room.players).map((p:any) => ({ nick: p.nick, isAi: p.isAi })) };
+  return { id: room.id, gameType: room.gameType, playerCount: Object.keys(room.players).length, state: room.state, players: Object.values(room.players).map((p:any) => ({ nick: p.nick, isAi: p.isAi })), aiType: room.aiType, difficulty: room.difficulty };
 }
 
 function addChat(room: any, nick: string, text: string, system = false) {
@@ -76,7 +76,7 @@ async function sendRoomState(room: any, to?: string) {
   const msg = {
     type: 'room_state',
     room: {
-      id: room.id, gameType: room.gameType, state: room.state,
+      id: room.id, gameType: room.gameType, state: room.state, aiType: room.aiType, difficulty: room.difficulty,
       players: room.players,
       chat: room.chat.slice(-50),
       gameState: room.game?.stateDict() ?? null,
@@ -138,7 +138,7 @@ async function maybeAiMove(room: any) {
   const timer = setTimeout(async () => {
     if (!room.game || room.game.finished || room.state !== 'playing') return;
     try {
-      const move = await fetchAiMove(gt, room.game, curSide);
+      const move = await fetchAiMove(gt, room.game, curSide, room);
       if (!move) return;
       const result = room.game.applyMove(move);
       if (!result.ok) return;
@@ -152,9 +152,28 @@ async function maybeAiMove(room: any) {
   aiTimers.set(room.id, timer);
 }
 
-async function fetchAiMove(gameType: string, game: any, side: string): Promise<any> {
-  // Simple built-in AI (fallback if ai-service not running)
-  const gs = game.stateDict();
+async function fetchAiMove(gameType: string, game: any, side: string, room?: any): Promise<any> {
+  // Engine mode: use Stockfish/Fairy-Stockfish for chess/xiangqi
+  if (room?.aiType === 'engine' && (gameType === 'chess' || gameType === 'xiangqi')) {
+    try {
+      const move = await fetchEngineMove(gameType, game, room.difficulty ?? 'medium');
+      if (move) {
+        // Validate engine move against game's legal moves before using it
+        const legal = game.legalMoves();
+        let isLegal = false;
+        if (gameType === 'chess') {
+          isLegal = legal.includes(move.uci);
+        } else {
+          isLegal = legal.some((m: any) =>
+            m.fromRow === move.fromRow && m.fromCol === move.fromCol &&
+            m.toRow === move.toRow && m.toCol === move.toCol);
+        }
+        if (isLegal) return move;
+        console.warn('Engine move rejected by game rules, using fallback AI');
+      }
+    } catch (e) { console.error('Engine error, falling back:', e); }
+  }
+  // Simple built-in AI (fallback)
   if (gameType === 'gomoku') return bestGomokuMove(game);
   if (gameType === 'chess') return bestChessMove(game);
   if (gameType === 'xiangqi') return bestXiangqiMove(game);
@@ -209,6 +228,100 @@ function bestXiangqiMove(game: any): any {
   if (!moves.length) return null;
   const captures = moves.filter((m: any) => game.get(m.toRow, m.toCol) !== ' ');
   return captures.length ? captures[Math.floor(Math.random()*captures.length)] : moves[Math.floor(Math.random()*moves.length)];
+}
+
+// ── Engine AI (Stockfish / Fairy-Stockfish) ─────────────────────────────────
+
+const DIFFICULTY_SKILL: Record<string, number> = { beginner: 2, easy: 6, medium: 12, hard: 16, max: 20 };
+const DIFFICULTY_TIME: Record<string, number> = { beginner: 200, easy: 500, medium: 1000, hard: 2000, max: 3000 };
+
+function xiangqiBoardToFen(game: any): string {
+  const board = game.board;
+  const rows: string[] = [];
+  // Reverse row order: our board[0]=Red top, but FEN rank 9 (first)=Black top
+  for (let r = 9; r >= 0; r--) {
+    let row = '';
+    let empty = 0;
+    for (let c = 0; c < 9; c++) {
+      const p = board[r][c];
+      if (p === ' ') { empty++; }
+      else { if (empty > 0) { row += empty; empty = 0; } row += p; }
+    }
+    if (empty > 0) row += empty;
+    rows.push(row);
+  }
+  const color = game.currentPlayer === 'red' ? 'w' : 'b';
+  return `${rows.join('/')} ${color} - - 0 1`;
+}
+
+async function fetchEngineMove(gameType: string, game: any, difficulty: string): Promise<any> {
+  const enginePath = gameType === 'chess' ? '/usr/games/stockfish' : '/usr/games/fairy-stockfish';
+  const skill = DIFFICULTY_SKILL[difficulty] ?? 12;
+  const moveTime = DIFFICULTY_TIME[difficulty] ?? 1000;
+
+  let fen: string;
+  if (gameType === 'chess') {
+    fen = game['chess'].fen();
+  } else if (gameType === 'xiangqi') {
+    fen = xiangqiBoardToFen(game);
+  } else {
+    return null;
+  }
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(enginePath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let output = '';
+    let resolved = false;
+
+    const timer = setTimeout(() => {
+      if (!resolved) { resolved = true; proc.kill(); reject(new Error('Engine timeout')); }
+    }, 15000);
+
+    proc.stderr.on('data', () => {}); // drain stderr to prevent pipe deadlock
+    proc.stdout.on('data', (data: Buffer) => {
+      output += data.toString();
+      if (output.includes('bestmove') && !resolved) {
+        const match = output.match(/bestmove\s+(\S+)/);
+        if (match) {
+          resolved = true;
+          clearTimeout(timer);
+          const uciMove = match[1];
+          try { proc.stdin.write('quit\n'); } catch {}
+          proc.kill();
+          if (gameType === 'chess') {
+            resolve({ uci: uciMove });
+          } else {
+            // Xiangqi: fairy-stockfish uses 1-indexed ranks (1-10), parse with regex
+            const m = uciMove.match(/^([a-i])(\d+)([a-i])(\d+)$/);
+            if (m) {
+              const fromCol = m[1].charCodeAt(0) - 97;
+              const fromRow = parseInt(m[2]) - 1; // 1-indexed to 0-indexed
+              const toCol = m[3].charCodeAt(0) - 97;
+              const toRow = parseInt(m[4]) - 1;
+              resolve({ fromRow, fromCol, toRow, toCol });
+            } else {
+              reject(new Error(`Invalid xiangqi UCI move: ${uciMove}`));
+            }
+          }
+        }
+      }
+    });
+
+    proc.on('error', (err) => {
+      if (!resolved) { resolved = true; clearTimeout(timer); reject(err); }
+    });
+    proc.on('exit', () => {
+      if (!resolved) { resolved = true; clearTimeout(timer); reject(new Error('Engine exited without bestmove')); }
+    });
+
+    let cmds = 'uci\n';
+    if (gameType === 'xiangqi') cmds += 'setoption name UCI_Variant value xiangqi\n';
+    cmds += `setoption name Skill Level value ${skill}\n`;
+    cmds += 'isready\n';
+    cmds += `position fen ${fen}\n`;
+    cmds += `go movetime ${moveTime}\n`;
+    proc.stdin.write(cmds);
+  });
 }
 
 async function handleMatchEnd(room: any, result: any) {
@@ -492,6 +605,8 @@ wss.on('connection', (ws) => {
       const gt = msg.gameType ?? 'gomoku';
       if (!['chess','gomoku','xiangqi'].includes(gt)) { ws.send(JSON.stringify({ type: 'error', msg: 'invalid game type' })); return; }
       const room = makeRoom(gt, clientId, nick);
+      if (msg.aiType && ['euler', 'engine'].includes(msg.aiType)) room.aiType = msg.aiType;
+      if (msg.difficulty && ['beginner', 'easy', 'medium', 'hard', 'max'].includes(msg.difficulty)) room.difficulty = msg.difficulty;
       rooms.set(room.id, room);
       room.players[clientId] = { nick, ready: false, isAi: false, side: null };
       room.spectators = [];
@@ -502,7 +617,7 @@ wss.on('connection', (ws) => {
       broadcastRoomsUpdate();
       if (msg.withAi) {
         const aiId = `AI_${room.id}`;
-        const aiNick = ['ChessBot','AI-Chan','DeepMove','RoboPlayer'][Math.floor(Math.random()*4)];
+        const aiNick = room.aiType === 'engine' ? `Engine (${room.difficulty}) ⚙️` : ['Euler 🤖','AI-Chan 🤖','DeepMove 🤖'][Math.floor(Math.random()*3)];
         room.players[aiId] = { nick: aiNick, ready: true, isAi: true, side: null };
         const aiMsg = addChat(room, 'System', `${aiNick} (AI) joined.`, true);
         const aiChat = addChat(room, aiNick, 'Let\'s play! Good luck 🎮');

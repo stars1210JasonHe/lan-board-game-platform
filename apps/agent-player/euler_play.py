@@ -3,20 +3,34 @@
 euler_play.py — Euler's board game client (AI-powered via game server API)
 
 Architecture:
-  - Game moves: tries server API (/api/move) first, falls back to local algorithm
-  - In-game chat: routed via server API (/api/chat)
-  - Local algorithms: gomoku/chess/xiangqi always available as fallback
+  - Two AI modes: "euler" (LLM via /api/move) and "engine" (Stockfish/Fairy-Stockfish)
+  - In-game chat: routed via server API (/api/chat) in both modes
+  - In-game commands: /engine [difficulty] to switch to engine, /euler to switch to LLM
+  - Difficulty levels: beginner, easy, medium, hard, max (engine Skill Level)
+  - Local algorithms: gomoku (minimax) / chess / xiangqi always available as fallback
 
 Usage:
   python3 euler_play.py <room_id> [--host 192.168.178.57] [--port 8765]
+  python3 euler_play.py <room_id> --mode engine --difficulty hard
   python3 euler_play.py --list   # list open rooms
 """
-import asyncio, json, random, sys, argparse, re
+import asyncio, json, random, sys, argparse, re, subprocess
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 import websockets
 
 EULER_NICK = "Euler 🤖"
+
+# ── Engine config ─────────────────────────────────────────────────────────────
+
+ENGINES = {
+    'chess': '/usr/games/stockfish',
+    'xiangqi': '/usr/games/fairy-stockfish',
+}
+
+DIFFICULTY_SKILL = {'beginner': 2, 'easy': 6, 'medium': 12, 'hard': 16, 'max': 20}
+DIFFICULTY_TIME = {'beginner': 0.2, 'easy': 0.5, 'medium': 1.0, 'hard': 2.0, 'max': 3.0}
+VALID_DIFFICULTIES = list(DIFFICULTY_SKILL.keys())
 
 
 # ── HTTP API helpers ──────────────────────────────────────────────────────────
@@ -93,59 +107,292 @@ def board_summary(game_state: dict) -> str:
     return ", ".join(parts)
 
 
-# ── Gomoku AI (local fallback) ────────────────────────────────────────────────
+# ── Engine AI (Stockfish / Fairy-Stockfish) ──────────────────────────────────
+
+def xiangqi_board_to_fen(board_rows, current_player):
+    """Convert xiangqi board (array of row strings) to FEN for fairy-stockfish.
+    Board has Red (uppercase) at row 0 (top), reversed to match standard FEN."""
+    fen_rows = []
+    # Reverse: our row 9 → FEN first row (rank 9 = Black back rank)
+    for row_str in reversed(board_rows):
+        fen_row = ''
+        empty = 0
+        for ch in row_str:
+            if ch == ' ':
+                empty += 1
+            else:
+                if empty > 0:
+                    fen_row += str(empty)
+                    empty = 0
+                fen_row += ch
+        if empty > 0:
+            fen_row += str(empty)
+        fen_rows.append(fen_row)
+    color = 'w' if current_player == 'red' else 'b'
+    return f"{'/'.join(fen_rows)} {color} - - 0 1"
+
+
+def engine_chess_move(fen, difficulty='medium'):
+    """Get a move from Stockfish for chess using python-chess."""
+    import chess
+    import chess.engine
+    skill = DIFFICULTY_SKILL.get(difficulty, 12)
+    time_limit = DIFFICULTY_TIME.get(difficulty, 1.0)
+    engine = chess.engine.SimpleEngine.popen_uci(ENGINES['chess'])
+    try:
+        engine.configure({"Skill Level": skill})
+        board = chess.Board(fen)
+        result = engine.play(board, chess.engine.Limit(time=time_limit))
+        return {"uci": result.move.uci()}
+    finally:
+        engine.quit()
+
+
+def engine_xiangqi_move(board_rows, current_player, difficulty='medium'):
+    """Get a move from Fairy-Stockfish for xiangqi."""
+    skill = DIFFICULTY_SKILL.get(difficulty, 12)
+    time_ms = int(DIFFICULTY_TIME.get(difficulty, 1.0) * 1000)
+    fen = xiangqi_board_to_fen(board_rows, current_player)
+
+    proc = subprocess.Popen(
+        [ENGINES['xiangqi']],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True
+    )
+    try:
+        commands = (
+            f"uci\nsetoption name UCI_Variant value xiangqi\n"
+            f"setoption name Skill Level value {skill}\nisready\n"
+            f"position fen {fen}\ngo movetime {time_ms}\n"
+        )
+        proc.stdin.write(commands)
+        proc.stdin.flush()
+
+        import time
+        deadline = time.monotonic() + (time_ms / 1000) + 10  # timeout buffer
+        while time.monotonic() < deadline:
+            line = proc.stdout.readline()
+            if line == '':  # EOF — engine died
+                break
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith('bestmove'):
+                uci_move = line.split()[1]
+                # Fairy-stockfish xiangqi uses 1-indexed ranks (1-10), parse with regex
+                m = re.match(r'^([a-i])(\d+)([a-i])(\d+)$', uci_move)
+                if m:
+                    from_col = ord(m.group(1)) - ord('a')
+                    from_row = int(m.group(2)) - 1  # 1-indexed to 0-indexed
+                    to_col = ord(m.group(3)) - ord('a')
+                    to_row = int(m.group(4)) - 1
+                    return {"fromRow": from_row, "fromCol": from_col,
+                            "toRow": to_row, "toCol": to_col}
+    finally:
+        try:
+            proc.stdin.write('quit\n')
+            proc.stdin.flush()
+        except Exception:
+            pass
+        proc.terminate()
+    return None
+
+
+# ── Gomoku AI (minimax with alpha-beta) ──────────────────────────────────────
 
 def gomoku_move(board, size, player):
+    """Minimax-based gomoku AI with alpha-beta pruning (depth 3).
+    Detects open-fours, double-threes, and critical threats."""
     opp = 2 if player == 1 else 1
+    DIRS = [(0, 1), (1, 0), (1, 1), (1, -1)]
+    center = size // 2
+
+    def check_win(r, c, p):
+        for dr, dc in DIRS:
+            count = 1
+            for s in (1, -1):
+                nr, nc = r + s * dr, c + s * dc
+                while 0 <= nr < size and 0 <= nc < size and board[nr][nc] == p:
+                    count += 1; nr += s * dr; nc += s * dc
+            if count >= 5:
+                return True
+        return False
+
+    def get_candidates():
+        """Cells within 2 of existing stones."""
+        cands = set()
+        has_stone = False
+        for r in range(size):
+            for c in range(size):
+                if board[r][c] != 0:
+                    has_stone = True
+                    for dr in range(-2, 3):
+                        for dc in range(-2, 3):
+                            nr, nc = r + dr, c + dc
+                            if 0 <= nr < size and 0 <= nc < size and board[nr][nc] == 0:
+                                cands.add((nr, nc))
+        if not has_stone:
+            return [(center, center)]
+        return list(cands)
+
+    def line_score(r, c, p):
+        """Score for placing p at (r,c): count patterns in all directions."""
+        total = 0
+        open_threes = 0
+        for dr, dc in DIRS:
+            count = 1
+            open_ends = 0
+            # Positive direction
+            nr, nc = r + dr, c + dc
+            while 0 <= nr < size and 0 <= nc < size and board[nr][nc] == p:
+                count += 1; nr += dr; nc += dc
+            if 0 <= nr < size and 0 <= nc < size and board[nr][nc] == 0:
+                open_ends += 1
+            # Negative direction
+            nr, nc = r - dr, c - dc
+            while 0 <= nr < size and 0 <= nc < size and board[nr][nc] == p:
+                count += 1; nr -= dr; nc -= dc
+            if 0 <= nr < size and 0 <= nc < size and board[nr][nc] == 0:
+                open_ends += 1
+
+            if count >= 5:
+                total += 100000
+            elif count == 4:
+                total += 50000 if open_ends == 2 else (5000 if open_ends == 1 else 0)
+            elif count == 3:
+                if open_ends == 2:
+                    total += 5000
+                    open_threes += 1
+                elif open_ends == 1:
+                    total += 500
+            elif count == 2:
+                total += 200 if open_ends == 2 else (50 if open_ends == 1 else 0)
+        # Double-three bonus
+        if open_threes >= 2:
+            total += 50000
+        return total
+
+    def heuristic_score(r, c):
+        """Quick scoring for move ordering."""
+        board[r][c] = player
+        s1 = line_score(r, c, player)
+        board[r][c] = opp
+        s2 = line_score(r, c, opp)
+        board[r][c] = 0
+        return s1 + s2
+
+    def evaluate():
+        """Static evaluation scanning all stones."""
+        score = 0
+        for r in range(size):
+            for c in range(size):
+                p = board[r][c]
+                if p == 0:
+                    continue
+                for dr, dc in DIRS:
+                    # Only count in positive direction to avoid double-counting
+                    nr, nc = r - dr, c - dc
+                    if 0 <= nr < size and 0 <= nc < size and board[nr][nc] == p:
+                        continue  # Not the start of this line
+                    count = 1
+                    nr, nc = r + dr, c + dc
+                    while 0 <= nr < size and 0 <= nc < size and board[nr][nc] == p:
+                        count += 1; nr += dr; nc += dc
+                    if count < 2:
+                        continue
+                    open_ends = 0
+                    # Check end after the line
+                    if 0 <= nr < size and 0 <= nc < size and board[nr][nc] == 0:
+                        open_ends += 1
+                    # Check end before the line
+                    br, bc = r - dr, c - dc
+                    if 0 <= br < size and 0 <= bc < size and board[br][bc] == 0:
+                        open_ends += 1
+
+                    val = 0
+                    if count >= 5:
+                        val = 100000
+                    elif count == 4:
+                        val = 50000 if open_ends >= 2 else (5000 if open_ends == 1 else 0)
+                    elif count == 3:
+                        val = 5000 if open_ends >= 2 else (500 if open_ends == 1 else 0)
+                    elif count == 2:
+                        val = 200 if open_ends >= 2 else (50 if open_ends == 1 else 0)
+                    score += val if p == player else -val
+        return score
+
+    def minimax(depth, alpha, beta, is_max):
+        cands = get_candidates()
+        if not cands:
+            return 0, None
+
+        # Order candidates by heuristic (top 15)
+        scored = sorted(cands, key=lambda m: -heuristic_score(m[0], m[1]))[:15]
+        best_move = scored[0]
+
+        if is_max:
+            max_eval = -999999
+            for r, c in scored:
+                board[r][c] = player
+                if check_win(r, c, player):
+                    board[r][c] = 0
+                    return 100000 + depth, (r, c)
+                if depth <= 1:
+                    val = evaluate()
+                else:
+                    val, _ = minimax(depth - 1, alpha, beta, False)
+                board[r][c] = 0
+                if val > max_eval:
+                    max_eval = val
+                    best_move = (r, c)
+                alpha = max(alpha, val)
+                if beta <= alpha:
+                    break
+            return max_eval, best_move
+        else:
+            min_eval = 999999
+            for r, c in scored:
+                board[r][c] = opp
+                if check_win(r, c, opp):
+                    board[r][c] = 0
+                    return -100000 - depth, (r, c)
+                if depth <= 1:
+                    val = evaluate()
+                else:
+                    val, _ = minimax(depth - 1, alpha, beta, True)
+                board[r][c] = 0
+                if val < min_eval:
+                    min_eval = val
+                    best_move = (r, c)
+                beta = min(beta, val)
+                if beta <= alpha:
+                    break
+            return min_eval, best_move
+
+    # Quick checks first: instant win or block
     empties = [(r, c) for r in range(size) for c in range(size) if board[r][c] == 0]
     if not empties:
         return None
 
-    def score(r, c, p):
-        dirs = [(0,1),(1,0),(1,1),(1,-1)]
-        best = 0
-        for dr, dc in dirs:
-            count = 1
-            for s in (1, -1):
-                nr, nc = r+s*dr, c+s*dc
-                while 0<=nr<size and 0<=nc<size and board[nr][nc] == p:
-                    count += 1; nr += s*dr; nc += s*dc
-            best = max(best, count)
-        return best
-
-    # Win move
     for r, c in empties:
         board[r][c] = player
-        if score(r, c, player) >= 5:
+        if check_win(r, c, player):
             board[r][c] = 0
             return {"row": r, "col": c}
         board[r][c] = 0
 
-    # Block opponent win
     for r, c in empties:
         board[r][c] = opp
-        if score(r, c, opp) >= 5:
+        if check_win(r, c, opp):
             board[r][c] = 0
             return {"row": r, "col": c}
         board[r][c] = 0
 
-    # Score-based best
-    best_score, best_move = -1, None
-    for r, c in empties:
-        board[r][c] = player
-        s1 = score(r, c, player)
-        board[r][c] = opp
-        s2 = score(r, c, opp)
-        board[r][c] = 0
-        s = s1 * 2 + s2
-        center = size // 2
-        s -= (abs(r-center) + abs(c-center)) * 0.1
-        if s > best_score:
-            best_score, best_move = s, (r, c)
-
-    if best_move:
-        return {"row": best_move[0], "col": best_move[1]}
-    return {"row": empties[0][0], "col": empties[0][1]}
+    # Minimax search (depth 3)
+    _, move = minimax(3, -999999, 999999, True)
+    if move:
+        return {"row": move[0], "col": move[1]}
+    return {"row": center, "col": center}
 
 
 # ── Chess AI (local fallback) ─────────────────────────────────────────────────
@@ -283,12 +530,23 @@ async def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-ai-chat", action="store_true",
                         help="Disable AI chat, use canned replies (fallback)")
+    parser.add_argument("--mode", choices=["euler", "engine"], default=None,
+                        help="AI mode: euler (LLM) or engine (Stockfish/Fairy-Stockfish)")
+    parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
+                        help="Engine difficulty level")
     args = parser.parse_args()
 
     ai_chat = not args.no_ai_chat
     base_url = f"http://{args.host}:{args.port}"
     ws_uri = f"ws://{args.host}:{args.port}"
+
+    # AI mode state (can be changed in-game via commands)
+    mode = args.mode or 'euler'
+    difficulty = args.difficulty or 'medium'
+    cli_mode_set = args.mode is not None  # True if user explicitly set mode via CLI
+
     print(f"Connecting to {ws_uri}...")
+    print(f"🎯 Mode: {mode} | Difficulty: {difficulty}")
     if ai_chat:
         print("🧠 AI chat enabled (via server API)")
     else:
@@ -367,14 +625,44 @@ async def main():
         await send_ws({"type": "join_room", "roomId": room_id})
 
         async def pick_move(gs):
+            nonlocal mode, difficulty
             gt = gs.get("gameType")
+
+            # Engine mode for chess/xiangqi
+            if mode == 'engine' and gt in ('chess', 'xiangqi'):
+                try:
+                    if gt == 'chess':
+                        fen = gs.get('fen')
+                        legal = gs.get('legalMoves', [])
+                        if fen:
+                            result = await asyncio.get_event_loop().run_in_executor(
+                                None, lambda: engine_chess_move(fen, difficulty)
+                            )
+                            if result and (not legal or result['uci'] in legal):
+                                print(f"⚙️ Engine chose: {result}")
+                                return result
+                            elif result:
+                                print(f"⚠️ Engine move {result} not in legal moves, falling back")
+                    elif gt == 'xiangqi':
+                        board_rows = gs.get('board', [])
+                        cur = gs.get('currentPlayer', 'red')
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: engine_xiangqi_move(board_rows, cur, difficulty)
+                        )
+                        if result:
+                            print(f"⚙️ Engine chose: {result}")
+                            return result
+                except Exception as e:
+                    print(f"⚠️ Engine error: {e}, falling back")
+
+            # Euler/LLM mode or fallback
             if gt == "gomoku":
-                if ai_chat:
+                if ai_chat and mode == 'euler':
                     ai_result = await api_move(base_url, gs, my_side)
                     if ai_result:
                         return ai_result
-                    print("⚠️ AI move failed, falling back to algorithm")
-                # Fallback to static algorithm
+                    print("⚠️ AI move failed, falling back to minimax")
+                # Minimax algorithm
                 board = [row[:] for row in gs["board"]]
                 return gomoku_move(board, gs["size"], gs["currentPlayer"])
             elif gt == "chess":
@@ -425,6 +713,15 @@ async def main():
                 for pid, pinfo in players.items():
                     if pid != my_id:
                         opponent_nick = pinfo.get("nick", "opponent")
+                # Read room AI config (if not explicitly set via CLI)
+                if not cli_mode_set:
+                    room_ai_type = room.get("aiType")
+                    room_difficulty = room.get("difficulty")
+                    if room_ai_type in ('euler', 'engine'):
+                        mode = room_ai_type
+                    if room_difficulty in VALID_DIFFICULTIES:
+                        difficulty = room_difficulty
+                    print(f"📋 Room config: mode={mode}, difficulty={difficulty}")
                 if gs:
                     game_state = gs
                 if not ready_sent and room.get("state") == "waiting":
@@ -440,7 +737,7 @@ async def main():
                 sides = msg.get("sides", {})
                 my_side = sides.get(my_id)
                 game_state = msg.get("gameState")
-                print(f"🎮 Match started! I am: {my_side}")
+                print(f"🎮 Match started! I am: {my_side} (mode={mode})")
 
                 if game_state and is_my_turn(game_state):
                     await asyncio.sleep(random.uniform(0.8, 2.0))
@@ -489,6 +786,27 @@ async def main():
                 text = chat_msg.get("text", "")
                 if sender != EULER_NICK and not chat_msg.get("system"):
                     print(f"💬 {sender}: {text}")
+
+                    # In-game commands
+                    stripped = text.strip().lower()
+                    if stripped.startswith('/engine'):
+                        parts = stripped.split()
+                        new_diff = parts[1] if len(parts) > 1 else difficulty
+                        if new_diff not in VALID_DIFFICULTIES:
+                            new_diff = 'medium'
+                        mode = 'engine'
+                        difficulty = new_diff
+                        print(f"⚙️ Switched to engine mode ({difficulty})")
+                        await send_ws({"type": "chat",
+                                       "text": f"⚙️ Switched to engine mode ({difficulty})"})
+                        continue
+                    elif stripped == '/euler':
+                        mode = 'euler'
+                        print("🤖 Switched to Euler AI mode")
+                        await send_ws({"type": "chat",
+                                       "text": "🤖 Switched to Euler AI mode"})
+                        continue
+
                     ctx = board_summary(game_state) if game_state else ""
                     reply = await chat_reply(text, ctx, game_type or "")
                     if reply:
