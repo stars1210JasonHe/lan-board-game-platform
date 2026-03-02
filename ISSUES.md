@@ -72,3 +72,27 @@
 - **Root cause:** Frontend `player_left` handler only appended a chat message but never switched screens or cleaned up state.
 - **Fix:** On `player_left`, show disconnect notification and auto-return to lobby after 3 seconds.
 - **Found:** 2026-03-02
+
+## Bug #7 (confirmed): Play Again — board not reset + agent exits — FIXED
+- **Status:** FIXED
+- **Fix:** Frontend clears canvas and gameState when room resets to 'waiting'. euler_play.py now stays alive after match_end, sends play_again, and loops back for new matches.
+
+## Bug #8 (confirmed): vsAI Euler mode — no real AI spawned — FIXED
+- **Status:** FIXED
+- **Fix:** Server now spawns euler_play.py as a subprocess for vsAI euler mode. Engine mode still uses built-in AI.
+
+## Bug #9 (confirmed again): Stuck in game screen when opponent leaves — FIXED
+- **Status:** FIXED
+- **Fix:** Frontend player_left handler shows disconnect toast and auto-returns to lobby after 3s.
+
+## Bug #10: Xiangqi "stuck" — can't click pieces mid-game
+- **Status:** FIXED
+- **Symptom:** Player felt stuck during xiangqi game (room RB3AM5, 18 moves in). Clicking pieces didn't work.
+- **Root cause:** Frontend xiangqi click handler didn't validate piece ownership on first click (could select empty/enemy squares). No ability to reselect different pieces. Move rejections silently logged to console with no feedback.
+- **Fix:** Validate first click is own piece, allow reselection by clicking different own piece, show error toast for rejected moves.
+
+## Bug #11: Server drops WebSocket mid-game (ConnectionClosedError)
+- **Status:** FIXED
+- **Symptom:** euler_play.py crashes with ConnectionClosedError after several moves. Server drops connection.
+- **Root cause:** No ping/pong keepalive. Unhandled exceptions in WS message handler could crash connections. broadcast() had no error handling.
+- **Fix:** Added ping/pong keepalive (30s interval). Wrapped message handler in try/catch. Added try/catch to broadcast/sendClient. euler_play.py now handles ConnectionClosed gracefully.

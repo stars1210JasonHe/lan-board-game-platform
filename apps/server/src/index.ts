@@ -58,18 +58,24 @@ async function broadcast(room: any, msg: any, exclude?: string) {
   const str = JSON.stringify(msg);
   for (const [pid, p] of Object.entries<any>(room.players)) {
     if (pid === exclude || p.isAi) continue;
-    const ws = clients.get(pid);
-    if (ws?.readyState === WebSocket.OPEN) ws.send(str);
+    try {
+      const ws = clients.get(pid);
+      if (ws?.readyState === WebSocket.OPEN) ws.send(str);
+    } catch (e) { console.error(`broadcast send error to ${pid}:`, e); }
   }
   for (const sid of room.spectators ?? []) {
-    const ws = clients.get(sid);
-    if (ws?.readyState === WebSocket.OPEN) ws.send(str);
+    try {
+      const ws = clients.get(sid);
+      if (ws?.readyState === WebSocket.OPEN) ws.send(str);
+    } catch (e) { console.error(`broadcast send error to spectator ${sid}:`, e); }
   }
 }
 
 async function sendClient(clientId: string, msg: any) {
-  const ws = clients.get(clientId);
-  if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  try {
+    const ws = clients.get(clientId);
+    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  } catch (e) { console.error(`sendClient error to ${clientId}:`, e); }
 }
 
 async function sendRoomState(room: any, to?: string) {
@@ -535,6 +541,25 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
   }
 }
 
+// ── Spawn Euler agent ─────────────────────────────────────────────────────
+function spawnEulerAgent(roomId: string, difficulty: string) {
+  const agentPath = join(__dirname, '..', '..', 'agent-player', 'euler_play.py');
+  console.log(`[euler] Spawning agent for room ${roomId} (difficulty=${difficulty})`);
+  const proc = spawn('python3', [agentPath, roomId, '--mode', 'euler', '--difficulty', difficulty, '--no-ai-chat'], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: join(__dirname, '..', '..', 'agent-player'),
+  });
+  proc.stdout?.on('data', (d: Buffer) => {
+    for (const line of d.toString().split('\n').filter(Boolean))
+      console.log(`[euler@${roomId}] ${line}`);
+  });
+  proc.stderr?.on('data', (d: Buffer) => {
+    for (const line of d.toString().split('\n').filter(Boolean))
+      console.error(`[euler@${roomId}] ${line}`);
+  });
+  proc.on('exit', (code) => console.log(`[euler@${roomId}] exited (code=${code})`));
+}
+
 // ── HTTP server (serve static files + API) ───────────────────────────────────
 const staticDir = join(__dirname, '..', 'static');
 
@@ -579,12 +604,26 @@ const httpServer = createServer((req, res) => {
 // ── WebSocket ─────────────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ server: httpServer });
 
+// Ping/pong keepalive — detect dead connections every 30s
+const aliveMap = new Map<WebSocket, boolean>();
+const pingInterval = setInterval(() => {
+  for (const ws of wss.clients) {
+    if (aliveMap.get(ws) === false) { ws.terminate(); continue; }
+    aliveMap.set(ws, false);
+    try { ws.ping(); } catch {}
+  }
+}, 30_000);
+wss.on('close', () => clearInterval(pingInterval));
+
 wss.on('connection', (ws) => {
   const clientId = uuidv4();
   let nick = 'Anonymous';
   clients.set(clientId, ws);
+  aliveMap.set(ws, true);
+  ws.on('pong', () => aliveMap.set(ws, true));
 
   ws.on('message', async (data) => {
+    try {
     let msg: any;
     try { msg = JSON.parse(data.toString()); } catch { return; }
     const type = msg.type;
@@ -616,15 +655,25 @@ wss.on('connection', (ws) => {
       await sendRoomState(room, clientId);
       broadcastRoomsUpdate();
       if (msg.withAi) {
-        const aiId = `AI_${room.id}`;
-        const aiNick = room.aiType === 'engine' ? `Engine (${room.difficulty}) ⚙️` : ['Euler 🤖','AI-Chan 🤖','DeepMove 🤖'][Math.floor(Math.random()*3)];
-        room.players[aiId] = { nick: aiNick, ready: true, isAi: true, side: null };
-        room.players[clientId].ready = true;
-        const aiMsg = addChat(room, 'System', `${aiNick} (AI) joined.`, true);
-        const aiChat = addChat(room, aiNick, 'Let\'s play! Good luck 🎮');
-        await broadcast(room, { type: 'chat', message: aiMsg });
-        await broadcast(room, { type: 'chat', message: aiChat });
-        await startMatch(room);
+        if (room.aiType === 'euler') {
+          // Spawn euler_play.py as external agent (joins as real player)
+          room.players[clientId].ready = true;
+          const sysMsg = addChat(room, 'System', 'Spawning Euler AI agent...', true);
+          await broadcast(room, { type: 'chat', message: sysMsg });
+          await sendRoomState(room, clientId);
+          spawnEulerAgent(room.id, room.difficulty);
+        } else {
+          // Built-in AI (engine mode) — handled server-side
+          const aiId = `AI_${room.id}`;
+          const aiNick = `Engine (${room.difficulty}) ⚙️`;
+          room.players[aiId] = { nick: aiNick, ready: true, isAi: true, side: null };
+          room.players[clientId].ready = true;
+          const aiMsg = addChat(room, 'System', `${aiNick} (AI) joined.`, true);
+          const aiChat = addChat(room, aiNick, 'Let\'s play! Good luck 🎮');
+          await broadcast(room, { type: 'chat', message: aiMsg });
+          await broadcast(room, { type: 'chat', message: aiChat });
+          await startMatch(room);
+        }
       }
       return;
     }
@@ -726,10 +775,11 @@ wss.on('connection', (ws) => {
 
     if (type === 'leave_room') { await handleLeave(clientId, nick); return; }
     if (type === 'get_history') { ws.send(JSON.stringify({ type: 'history', matches: listMatches() })); return; }
+    } catch (e) { console.error(`Unhandled WS message error [${clientId}]:`, e); }
   });
 
-  ws.on('close', () => { clients.delete(clientId); handleLeave(clientId, nick); });
-  ws.on('error', () => { clients.delete(clientId); handleLeave(clientId, nick); });
+  ws.on('close', () => { aliveMap.delete(ws); clients.delete(clientId); handleLeave(clientId, nick); });
+  ws.on('error', () => { aliveMap.delete(ws); clients.delete(clientId); handleLeave(clientId, nick); });
 });
 
 httpServer.listen(PORT, '0.0.0.0', () => {

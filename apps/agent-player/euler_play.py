@@ -583,9 +583,13 @@ async def main():
                 return reply
         return random.choice(CANNED.get(fallback_key, ["😄"]))
 
-    async with websockets.connect(ws_uri) as ws:
+    async with websockets.connect(ws_uri, ping_interval=20, ping_timeout=10) as ws:
         async def send_ws(msg):
-            await ws.send(json.dumps(msg))
+            try:
+                await ws.send(json.dumps(msg))
+            except websockets.exceptions.ConnectionClosed:
+                print("Connection lost while sending.")
+                return
 
         async def recv_ws():
             return json.loads(await ws.recv())
@@ -694,7 +698,8 @@ async def main():
 
         ready_sent = False
 
-        async for raw in ws:
+        try:
+         async for raw in ws:
             msg = json.loads(raw)
             t = msg.get("type")
 
@@ -785,8 +790,14 @@ async def main():
                 else:
                     reply = await event_reply("I lost the game", "lose", ctx, game_type or "")
                 await send_ws({"type": "chat", "text": reply})
-                print("Game over. Exiting.")
-                break
+
+                # Stay alive: request play_again and wait for next match
+                last_move_count = -1
+                ready_sent = False
+                game_state = None
+                await asyncio.sleep(2.0)
+                await send_ws({"type": "play_again"})
+                print("🔄 Sent play_again, waiting for next match...")
 
             elif t == "chat":
                 chat_msg = msg.get("message", {})
@@ -824,6 +835,10 @@ async def main():
             elif t == "player_left":
                 print(f"👋 {msg.get('nick')} left.")
                 break
+        except websockets.exceptions.ConnectionClosed as e:
+            print(f"🔌 Connection closed: {e}")
+        except Exception as e:
+            print(f"❌ Unexpected error: {e}")
 
 if __name__ == "__main__":
     try:

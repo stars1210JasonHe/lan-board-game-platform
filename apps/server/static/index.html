@@ -220,9 +220,11 @@ function handleMsg(msg) {
   if (msg.type === 'player_ready') {}
   if (msg.type === 'player_left') {
     appendChat({ nick:'System', text:`${String(msg.nick)} disconnected. Returning to lobby...`, system:true });
-    setTimeout(() => { document.getElementById('end-modal').classList.add('hidden'); leaveRoom(); }, 3000);
+    showError(`${String(msg.nick)} disconnected — returning to lobby...`);
+    document.getElementById('end-modal').classList.add('hidden');
+    setTimeout(() => { leaveRoom(); }, 3000);
   }
-  if (msg.type === 'error') console.warn('Server error:', msg.msg);
+  if (msg.type === 'error') { console.warn('Server error:', msg.msg); showError(msg.msg); }
 }
 
 // ── Screens ───────────────────────────────────────────────────────────────────
@@ -287,6 +289,8 @@ function updateRoomState(room) {
   if (room.state === 'waiting') {
     showScreen('room');
     selectedFrom = null;
+    gameState = null;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
 
   if (room.state === 'playing' && gameState) {
@@ -361,6 +365,22 @@ function sendChat(scope) {
   if (!text) return;
   send({ type: 'chat', text });
   document.getElementById(id).value = '';
+}
+
+// ── Error toast ──────────────────────────────────────────────────────────
+let errorTimeout = null;
+function showError(msg) {
+  let toast = document.getElementById('error-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'error-toast';
+    toast.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#c0392b;color:#fff;padding:10px 24px;border-radius:8px;font-weight:600;z-index:200;display:none;font-size:0.95rem';
+    document.body.appendChild(toast);
+  }
+  toast.textContent = msg;
+  toast.style.display = 'block';
+  if (errorTimeout) clearTimeout(errorTimeout);
+  errorTimeout = setTimeout(() => { toast.style.display = 'none'; }, 2500);
 }
 
 // ── Match ─────────────────────────────────────────────────────────────────────
@@ -480,13 +500,30 @@ function renderChess() {
   for(let i=0;i<8;i++){ctx.textAlign='left';ctx.fillText(8-i,2,i*cell+cell/2);}
 }
 
+function isOwnChessPiece(r,c) {
+  const fen = gameState?.fen;
+  if (!fen) return false;
+  const rows = fen.split(' ')[0].split('/');
+  let col = 0, piece = null;
+  for (const ch of rows[r] || '') {
+    if (isNaN(+ch)) { if (col === c) { piece = ch; break; } col++; }
+    else col += +ch;
+  }
+  if (!piece) return false;
+  return (mySide === 'white' && piece === piece.toUpperCase()) || (mySide === 'black' && piece === piece.toLowerCase());
+}
+
 function onChessClick(x,y) {
   const cell=75;
   const c=Math.floor(x/cell), r=Math.floor(y/cell);
   const sq = 'abcdefgh'[c] + (8-r);
-  if (!selectedFrom) { selectedFrom=[r,c,sq]; renderBoard(); return; }
+  if (!selectedFrom) {
+    if (!isOwnChessPiece(r,c)) return;
+    selectedFrom=[r,c,sq]; renderBoard(); return;
+  }
   const fromSq = selectedFrom[2];
   if (fromSq===sq) { selectedFrom=null; renderBoard(); return; }
+  if (isOwnChessPiece(r,c)) { selectedFrom=[r,c,sq]; renderBoard(); return; }
   send({ type:'move', move:{ uci: fromSq+sq } });
   selectedFrom=null;
 }
@@ -533,13 +570,25 @@ function renderXiangqi() {
   }
 }
 
+function isOwnXiangqiPiece(r,c) {
+  const board = gameState?.board;
+  if (!board || !board[r]) return false;
+  const p = board[r][c];
+  if (!p || p === ' ') return false;
+  return (mySide === 'red' && p === p.toUpperCase()) || (mySide === 'black' && p === p.toLowerCase());
+}
+
 function onXiangqiClick(x,y) {
   const cell=60,padX=30,padY=30;
   const c=Math.round((x-padX)/cell), r=Math.round((y-padY)/cell);
   if(r<0||r>9||c<0||c>8) return;
-  if(!selectedFrom) { selectedFrom=[r,c]; renderBoard(); return; }
+  if(!selectedFrom) {
+    if (!isOwnXiangqiPiece(r,c)) return;
+    selectedFrom=[r,c]; renderBoard(); return;
+  }
   const [fr,fc]=selectedFrom;
   if(fr===r&&fc===c) { selectedFrom=null; renderBoard(); return; }
+  if (isOwnXiangqiPiece(r,c)) { selectedFrom=[r,c]; renderBoard(); return; }
   send({ type:'move', move:{fromRow:fr,fromCol:fc,toRow:r,toCol:c} });
   selectedFrom=null;
 }
