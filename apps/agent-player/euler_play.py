@@ -78,7 +78,7 @@ async def api_chat(base_url: str, text: str, game_context: str = "", game_type: 
     if game_type:
         data["gameType"] = game_type
     result = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: api_post(base_url, "/api/chat", data, timeout=20)
+        None, lambda: api_post(base_url, "/api/chat", data, timeout=45)
     )
     if result and result.get("reply"):
         return result["reply"]

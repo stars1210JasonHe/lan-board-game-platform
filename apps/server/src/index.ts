@@ -520,7 +520,7 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
       : `[Context: ${CHAT_SYSTEM_CONTEXT}]\n${safeText}`;
 
     try {
-      const reply = await callOpenclawAgent('euler-gomoku-game', message, 15);
+      const reply = await callOpenclawAgent('euler-gomoku-game', message, 30);
       if (!reply || reply.trim() === '' || reply.trim() === 'NO_REPLY' || reply.trim() === 'HEARTBEAT_OK') {
         jsonResponse(res, 200, { reply: null });
         return;
