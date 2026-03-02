@@ -218,7 +218,10 @@ function handleMsg(msg) {
   if (msg.type === 'chat') appendChat(msg.message);
   if (msg.type === 'match_end') showEndModal(msg);
   if (msg.type === 'player_ready') {}
-  if (msg.type === 'player_left') appendChat({ nick:'System', text:`${String(msg.nick)} left.`, system:true });
+  if (msg.type === 'player_left') {
+    appendChat({ nick:'System', text:`${String(msg.nick)} disconnected. Returning to lobby...`, system:true });
+    setTimeout(() => { document.getElementById('end-modal').classList.add('hidden'); leaveRoom(); }, 3000);
+  }
   if (msg.type === 'error') console.warn('Server error:', msg.msg);
 }
 
@@ -280,6 +283,11 @@ function updateRoomState(room) {
   document.getElementById('room-title').textContent = `Room: ${room.id} (${room.gameType})`;
   gameType = room.gameType;
   gameState = room.gameState;
+
+  if (room.state === 'waiting') {
+    showScreen('room');
+    selectedFrom = null;
+  }
 
   if (room.state === 'playing' && gameState) {
     showScreen('match');

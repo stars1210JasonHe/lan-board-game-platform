@@ -40,3 +40,35 @@
 ## Tasks from game chat
 - [ ] Download an interesting AI/math paper — user requested
 - [x] Fix all bugs above, test, and redeploy
+
+## Bug #6: Agent player cannot ready up / game won't start — FIXED
+- **Status:** FIXED
+- **Severity:** HIGH
+- **Description:** When Euler agent joins a room, it appears to connect but the game cannot start. Either the agent fails to send ready signal, or the ready/start flow is broken. No output from euler_play.py (stdout may be buffered or agent hangs before ready).
+- **Root cause:** Server's `ready` handler toggled ready status but never sent `sendRoomState()`, so frontend never updated to show ready status. UI appeared stuck.
+- **Fix:** Added `sendRoomState(room)` after ready toggle so UI reflects current ready status.
+- **Found:** 2026-03-02
+
+## Bug #7: "Play Again" does not reset the board — FIXED
+- **Status:** FIXED
+- **Severity:** MEDIUM
+- **Description:** After a game ends, clicking "Play Again" does not clear/reset the board. Old pieces remain on screen.
+- **Root cause:** Frontend `updateRoomState` didn't switch back to room screen when state changed to 'waiting' after play_again. Player stayed on match screen with stale board.
+- **Fix:** Added check in `updateRoomState`: when `room.state === 'waiting'`, switch to room screen and clear selection state.
+- **Found:** 2026-03-02
+
+## Bug #8: vsAI mode - AI engine doesn't auto-join room — FIXED
+- **Status:** FIXED
+- **Severity:** HIGH
+- **Description:** When creating a vsAI room, the AI engine does not automatically join. Player is left waiting alone.
+- **Root cause:** AI player joined and was marked ready, but host was left with `ready: false`. Game required manual ready-up. Match never auto-started.
+- **Fix:** Auto-ready the host in vsAI mode and call `startMatch()` immediately instead of just sending room state.
+- **Found:** 2026-03-02
+
+## Bug #9: Opponent disconnect doesn't return player to room/lobby — FIXED
+- **Status:** FIXED
+- **Severity:** MEDIUM
+- **Description:** When opponent disconnects mid-game or after game ends, the remaining player stays stuck on the board view instead of being returned to the room/lobby screen.
+- **Root cause:** Frontend `player_left` handler only appended a chat message but never switched screens or cleaned up state.
+- **Fix:** On `player_left`, show disconnect notification and auto-return to lobby after 3 seconds.
+- **Found:** 2026-03-02

@@ -619,11 +619,12 @@ wss.on('connection', (ws) => {
         const aiId = `AI_${room.id}`;
         const aiNick = room.aiType === 'engine' ? `Engine (${room.difficulty}) ⚙️` : ['Euler 🤖','AI-Chan 🤖','DeepMove 🤖'][Math.floor(Math.random()*3)];
         room.players[aiId] = { nick: aiNick, ready: true, isAi: true, side: null };
+        room.players[clientId].ready = true;
         const aiMsg = addChat(room, 'System', `${aiNick} (AI) joined.`, true);
         const aiChat = addChat(room, aiNick, 'Let\'s play! Good luck 🎮');
         await broadcast(room, { type: 'chat', message: aiMsg });
         await broadcast(room, { type: 'chat', message: aiChat });
-        await sendRoomState(room, clientId);
+        await startMatch(room);
       }
       return;
     }
@@ -665,6 +666,7 @@ wss.on('connection', (ws) => {
       // auto-start if all ready and 2 players
       const allPlayers = Object.values<any>(room.players);
       if (allPlayers.length === 2 && allPlayers.every((p:any) => p.ready)) await startMatch(room);
+      else await sendRoomState(room);
       return;
     }
 
