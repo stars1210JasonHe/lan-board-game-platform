@@ -386,11 +386,10 @@ function showError(msg) {
 // ── Match ─────────────────────────────────────────────────────────────────────
 function isMyTurnNow() {
   if (!gameState || !mySide) return false;
-  // Gomoku: currentPlayer is number (1=black,2=white), mySide is string
-  // Chess/Xiangqi: currentPlayer is string, mySide is string
   const cur = gameState.currentPlayer;
-  const curName = gameState.currentPlayerName ?? cur;
-  return cur === mySide || curName === mySide;
+  // Normalize: gomoku sends number 1=black 2=white; chess/xiangqi send strings matching mySide
+  const side = cur === 1 ? 'black' : cur === 2 ? 'white' : cur;
+  return side === mySide;
 }
 
 function updateTurn() {
