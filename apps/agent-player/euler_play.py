@@ -620,6 +620,7 @@ async def main():
         game_type = None
         game_state = None
         opponent_nick = "opponent"
+        last_move_count = -1  # track moveCount we last acted on to prevent duplicate moves
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
@@ -679,6 +680,18 @@ async def main():
             cur_name = gs.get("currentPlayerName", cur)
             return cur == my_side or cur_name == my_side
 
+        async def try_move(gs):
+            """Send a move if it's our turn and we haven't already acted on this moveCount."""
+            nonlocal last_move_count
+            mc = gs.get("moveCount", 0)
+            if mc == last_move_count:
+                return  # already sent a move for this state
+            last_move_count = mc
+            move = await pick_move(gs)
+            if move:
+                await send_ws({"type": "move", "move": move})
+            return move
+
         ready_sent = False
 
         async for raw in ws:
@@ -729,9 +742,7 @@ async def main():
                     ready_sent = True
                 if gs and not gs.get("finished") and is_my_turn(gs):
                     await asyncio.sleep(random.uniform(0.5, 1.5))
-                    move = await pick_move(gs)
-                    if move:
-                        await send_ws({"type": "move", "move": move})
+                    await try_move(gs)
 
             elif t == "match_start":
                 sides = msg.get("sides", {})
@@ -741,18 +752,15 @@ async def main():
 
                 if game_state and is_my_turn(game_state):
                     await asyncio.sleep(random.uniform(0.8, 2.0))
-                    move = await pick_move(game_state)
-                    if move:
-                        await send_ws({"type": "move", "move": move})
+                    await try_move(game_state)
 
             elif t == "move":
                 game_state = msg.get("gameState", game_state)
                 if game_state and not game_state.get("finished"):
                     if is_my_turn(game_state):
                         await asyncio.sleep(random.uniform(0.8, 2.0))
-                        move = await pick_move(game_state)
+                        move = await try_move(game_state)
                         if move:
-                            await send_ws({"type": "move", "move": move})
                             # Occasionally comment on our own move
                             if random.random() < 0.25:
                                 ctx = board_summary(game_state)
