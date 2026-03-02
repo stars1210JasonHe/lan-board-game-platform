@@ -57,7 +57,7 @@ export class XiangqiGame {
     return [];
   }
 
-  private palaceRows(col: Color) { return col === 'red' ? [7,8,9] : [0,1,2]; }
+  private palaceRows(col: Color) { return col === 'red' ? [0,1,2] : [7,8,9]; }
 
   private canTarget(r: number, c: number, col: Color): boolean {
     const p = this.get(r, c);
@@ -77,7 +77,7 @@ export class XiangqiGame {
   }
 
   private elephantMoves(r: number, c: number, col: Color): [number,number][] {
-    const homeRows = col === 'red' ? [5,6,7,8,9] : [0,1,2,3,4];
+    const homeRows = col === 'red' ? [0,1,2,3,4] : [5,6,7,8,9];
     return [[2,2],[2,-2],[-2,2],[-2,-2]]
       .map(([dr,dc]) => [r+dr, c+dc, r+dr/2, c+dc/2] as [number,number,number,number])
       .filter(([nr,nc,mr,mc]) => inBounds(nr,nc) && homeRows.includes(nr) && this.empty(mr,mc) && this.canTarget(nr,nc,col))
@@ -122,8 +122,8 @@ export class XiangqiGame {
   }
 
   private pawnMoves(r: number, c: number, col: Color): [number,number][] {
-    const fwd = col === 'red' ? -1 : 1;
-    const crossed = col === 'red' ? r <= 4 : r >= 5;
+    const fwd = col === 'red' ? 1 : -1;
+    const crossed = col === 'red' ? r >= 5 : r <= 4;
     const result: [number,number][] = [];
     const nr = r+fwd, nc = c;
     if (inBounds(nr,nc) && this.canTarget(nr,nc,col)) result.push([nr,nc]);

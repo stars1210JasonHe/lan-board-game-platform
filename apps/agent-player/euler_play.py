@@ -431,19 +431,19 @@ def xiangqi_move(board_rows, side):
         t = p.upper()
         moves = []
         if t == 'K':
-            palace_rows = range(7, 10) if upper else range(0, 3)
+            palace_rows = range(0, 3) if upper else range(7, 10)
             for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
                 nr, nc = r+dr, c+dc
                 if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
                     moves.append((nr, nc))
         elif t == 'A':
-            palace_rows = range(7, 10) if upper else range(0, 3)
+            palace_rows = range(0, 3) if upper else range(7, 10)
             for dr, dc in [(1,1),(1,-1),(-1,1),(-1,-1)]:
                 nr, nc = r+dr, c+dc
                 if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
                     moves.append((nr, nc))
         elif t == 'B':
-            home = range(5, 10) if upper else range(0, 5)
+            home = range(0, 5) if upper else range(5, 10)
             for dr, dc in [(2,2),(2,-2),(-2,2),(-2,-2)]:
                 nr, nc = r+dr, c+dc
                 mr, mc = r+dr//2, c+dc//2
@@ -484,8 +484,8 @@ def xiangqi_move(board_rows, side):
                             break
                     nr += dr; nc += dc
         elif t == 'P':
-            fwd = -1 if upper else 1
-            crossed = r <= 4 if upper else r >= 5
+            fwd = 1 if upper else -1
+            crossed = r >= 5 if upper else r <= 4
             nr, nc = r+fwd, c
             if in_bounds(nr, nc) and can_target(nr, nc):
                 moves.append((nr, nc))
