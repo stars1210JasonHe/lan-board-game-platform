@@ -32,6 +32,22 @@ function saveMatch(r: any) {
 function listMatches() {
   return db.prepare('SELECT id,game_type,room_id,started_at,ended_at,player1,player2,winner,result FROM matches ORDER BY started_at DESC LIMIT 100').all();
 }
+function listRoomMatches(roomId: string) {
+  return db.prepare('SELECT id,game_type,started_at,ended_at,player1,player2,winner,result,moves FROM matches WHERE room_id=? ORDER BY started_at DESC LIMIT 20').all(roomId);
+}
+
+// ── Nick deduplication ────────────────────────────────────────────────────────
+function getUniqueNick(room: any, proposedNick: string, excludeId?: string): string {
+  const existing = new Set(
+    Object.entries<any>(room.players)
+      .filter(([id]) => id !== excludeId)
+      .map(([, p]) => p.nick)
+  );
+  if (!existing.has(proposedNick)) return proposedNick;
+  let i = 2;
+  while (existing.has(`${proposedNick}_${i}`)) i++;
+  return `${proposedNick}_${i}`;
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const rooms: Map<string, any> = new Map();
@@ -87,6 +103,7 @@ async function sendRoomState(room: any, to?: string) {
       chat: room.chat.slice(-50),
       gameState: room.game?.stateDict() ?? null,
       moves: room.moves.slice(-100),
+      matchHistory: listRoomMatches(room.id),
     }
   };
   if (to) await sendClient(to, msg); else await broadcast(room, msg);
@@ -683,9 +700,11 @@ wss.on('connection', (ws) => {
       if (!room) { ws.send(JSON.stringify({ type: 'error', msg: 'room not found' })); return; }
       const humanCount = Object.values<any>(room.players).filter((p:any) => !p.isAi).length;
       if (humanCount >= 2 || room.state !== 'waiting') { ws.send(JSON.stringify({ type: 'error', msg: 'room full or in progress' })); return; }
-      room.players[clientId] = { nick, ready: false, isAi: false, side: null };
+      const joinNick = getUniqueNick(room, nick);
+      if (joinNick !== nick) nick = joinNick; // update local nick for this session
+      room.players[clientId] = { nick: joinNick, ready: false, isAi: false, side: null };
       clientRoom.set(clientId, room.id);
-      const joinMsg = addChat(room, 'System', `${nick} joined.`, true);
+      const joinMsg = addChat(room, 'System', `${joinNick} joined.`, true);
       ws.send(JSON.stringify({ type: 'room_joined', roomId: room.id }));
       await broadcast(room, { type: 'chat', message: joinMsg });
       await sendRoomState(room);
@@ -764,11 +783,26 @@ wss.on('connection', (ws) => {
       const roomId = clientRoom.get(clientId);
       const room = rooms.get(roomId ?? '');
       if (!room) return;
+      // Only a non-AI human player can trigger a full room reset (prevents Euler auto-reset)
+      const requestingPlayer = room.players[clientId];
+      const isHumanRequest = requestingPlayer && !requestingPlayer.isAi;
+      if (!isHumanRequest) return; // Ignore play_again from AI bots
+      // If room is already in waiting state (e.g. Euler already reset it), just confirm to requester
+      if (room.state === 'waiting') { await sendRoomState(room, clientId); return; }
+      if (room.state === 'playing') return; // can't play_again during active match
+      // Full reset (state must be 'finished')
       room.state = 'waiting'; room.game = null; room.matchId = null; room.startedAt = null; room.moves = [];
       for (const p of Object.values<any>(room.players)) { p.ready = p.isAi ? true : false; p.side = null; }
       const resetMsg = addChat(room, 'System', 'Room reset. Ready up for a new match!', true);
       await broadcast(room, { type: 'chat', message: resetMsg });
-      await sendRoomState(room);
+      // Engine mode (built-in AI player): auto-start without requiring human to click Ready again
+      const hasBuiltinAi = Object.values<any>(room.players).some((p:any) => p.isAi);
+      if (hasBuiltinAi) {
+        for (const p of Object.values<any>(room.players)) { p.ready = true; }
+        await startMatch(room);
+      } else {
+        await sendRoomState(room);
+      }
       broadcastRoomsUpdate();
       return;
     }

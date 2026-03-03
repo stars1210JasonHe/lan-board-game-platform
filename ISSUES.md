@@ -96,3 +96,30 @@
 - **Symptom:** euler_play.py crashes with ConnectionClosedError after several moves. Server drops connection.
 - **Root cause:** No ping/pong keepalive. Unhandled exceptions in WS message handler could crash connections. broadcast() had no error handling.
 - **Fix:** Added ping/pong keepalive (30s interval). Wrapped message handler in try/catch. Added try/catch to broadcast/sendClient. euler_play.py now handles ConnectionClosed gracefully.
+
+## Bug #12：vsAI Engine 模式无法开始游戏
+- **状态：** FIXED
+- **发现：** 2026-03-03 测试
+- **修复：** Play Again 后 Engine 模式自动重启（检测到内置 AI 后直接调用 startMatch），无需手动点击 Ready
+
+## Bug #13：象棋 Play Again 后所有走法显示 illegal move
+- **状态：** FIXED
+- **发现：** 2026-03-03 测试
+- **根本原因：** Euler agent 自动发送 play_again 重置了房间，导致游戏状态与客户端 mySide 不同步
+- **修复：** Euler 不再自动发送 play_again；由人类玩家点击确认后触发房间重置；startMatch 创建新游戏对象完全重置状态
+
+## Bug #14：游戏结束后无结果弹窗，直接跳回准备房间
+- **状态：** FIXED
+- **发现：** 2026-03-03 测试
+- **根本原因：** Euler agent 自动发送 play_again → 服务器广播 room_state(waiting) → 前端 updateRoomState 直接调用 showScreen('room') 隐藏了弹窗
+- **修复：** (1) Euler 移除自动 play_again；(2) 前端：若结果弹窗可见，不自动切换到准备房间；(3) 弹窗显示 "You Win/You Lose/Draw" 个性化结果
+
+## Bug #15：玩家昵称无重名检测
+- **状态：** FIXED
+- **发现：** 2026-03-03 测试
+- **修复：** 服务端 join_room 时调用 getUniqueNick() 检测重名，自动追加数字后缀（Player_2、Player_3 等）
+
+## Feature #1：房间内对战记录
+- **状态：** DONE
+- **发现：** 2026-03-03 用户需求
+- **实现：** sendRoomState 包含 matchHistory（按房间 room_id 过滤，最近20场）；前端房间界面显示对战历史表格（双方、结果、手数、用时）

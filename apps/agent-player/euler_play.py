@@ -791,13 +791,12 @@ async def main():
                     reply = await event_reply("I lost the game", "lose", ctx, game_type or "")
                 await send_ws({"type": "chat", "text": reply})
 
-                # Stay alive: request play_again and wait for next match
+                # Stay alive: reset local state, wait for human to click Play Again
+                # The human triggers the room reset via play_again; we just wait for room_state(waiting)
                 last_move_count = -1
                 ready_sent = False
                 game_state = None
-                await asyncio.sleep(2.0)
-                await send_ws({"type": "play_again"})
-                print("🔄 Sent play_again, waiting for next match...")
+                print("🔄 Match ended, waiting for human to start next match...")
 
             elif t == "chat":
                 chat_msg = msg.get("message", {})
