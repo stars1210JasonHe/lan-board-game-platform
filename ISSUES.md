@@ -123,3 +123,40 @@
 - **状态：** DONE
 - **发现：** 2026-03-03 用户需求
 - **实现：** sendRoomState 包含 matchHistory（按房间 room_id 过滤，最近20场）；前端房间界面显示对战历史表格（双方、结果、手数、用时）
+
+## Bug #12 (revisited) — vsAI Engine 模式：AI 未自动加入
+- 状态：**VERIFIED WORKING**（2026-03-03 代码复查）
+- 分析：create_room 收到 withAi=true + aiType=engine 时，服务端正确执行 else 分支：
+  创建 AI_roomId 内置玩家 → 双方标记 ready → 调用 startMatch()。
+  assignSides 将人类分配为红方，内置 AI 为黑方；broadcast match_start 给人类。
+  代码逻辑正确，无需修改。之前"未修复"报告可能为误报。
+
+## Bug #16 — Euler 模式错误使用 Engine
+- 状态：**新发现**（2026-03-03）
+- 现象：用户在大厅选"Euler AI"房间，agent 却以 `--mode engine` 启动，用 Fairy-Stockfish 下棋
+- 期望：Euler 模式应调用 LLM API 来决策走法和对话；只有用户选"Engine ⚙️"才用引擎
+- 服务端在收到 `create_room` 时应通知 agent 用正确模式启动
+
+## Bug #17 — 象棋红马无法移动（illegal move）
+- 状态：**新发现**（2026-03-03）
+- 现象：红方右侧马（截图黄圈位置，约 row2 col6），周围无蹩脚棋子，仍报 illegal move
+- 期望：马按规则可正常走日字
+- 可能原因：服务端象棋走法验证逻辑有误（马腿判断错误）
+
+## Bug #18 — 对局历史显示 "unknown" 玩家名
+- 状态：**FIXED**（2026-03-03）
+- 现象：Feature #1 对局历史显示 "black wins (unknown)" 而非实际玩家昵称
+- 根本原因：handleMatchEnd 的 resultStr 使用 ${reason}（值为 'unknown'），而非胜者昵称
+- 修复：查找 winner side 对应的玩家昵称，改为 "${winner} wins (${winnerNick})" 格式
+
+## 测试更新（2026-03-03）
+- Bug #17 取消：马无法移动是因为被将军，走马会导致将死，服务端正确拒绝，非 bug
+- Bug #13 已修复：Play Again 后走法正常，无 illegal move
+
+## Bug #19 — Euler AI 象棋走法 illegal move
+- 状态：**FIXED**（2026-03-03）
+- 现象：vsAI Euler 模式，agent 连接成功，但第一步就报 illegal move，游戏卡住
+- 根本原因：euler_play.py 的 xiangqi_move() 生成"合理但不保证合法"的走法（不检查将军/
+  飞将等服务端规则）；服务端拒绝后 last_move_count 已锁定，euler 不会重试，游戏僵住
+- 修复：在 error 处理中，若错误为 "illegal move" 且仍是我方回合，则重置 last_move_count
+  并最多重试 MAX_ILLEGAL_RETRIES(5) 次；每次收到成功 move 事件时重置重试计数器

@@ -31,6 +31,7 @@ ENGINES = {
 DIFFICULTY_SKILL = {'beginner': 2, 'easy': 6, 'medium': 12, 'hard': 16, 'max': 20}
 DIFFICULTY_TIME = {'beginner': 0.2, 'easy': 0.5, 'medium': 1.0, 'hard': 2.0, 'max': 3.0}
 VALID_DIFFICULTIES = list(DIFFICULTY_SKILL.keys())
+MAX_ILLEGAL_RETRIES = 5  # max retries before giving up on an illegal move
 
 
 # ── HTTP API helpers ──────────────────────────────────────────────────────────
@@ -625,6 +626,7 @@ async def main():
         game_state = None
         opponent_nick = "opponent"
         last_move_count = -1  # track moveCount we last acted on to prevent duplicate moves
+        illegal_retries = 0   # retry counter for rejected moves
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
@@ -704,7 +706,18 @@ async def main():
             t = msg.get("type")
 
             if t == "error":
-                print(f"⚠️  Server error: {msg.get('msg')}")
+                err_msg = msg.get('msg', '')
+                print(f"⚠️  Server error: {err_msg}")
+                if err_msg == 'illegal move' and game_state and is_my_turn(game_state):
+                    illegal_retries += 1
+                    if illegal_retries <= MAX_ILLEGAL_RETRIES:
+                        print(f"🔄 Retry {illegal_retries}/{MAX_ILLEGAL_RETRIES} — picking different move...")
+                        last_move_count = -1  # reset so try_move will fire again
+                        await asyncio.sleep(random.uniform(0.3, 0.8))
+                        await try_move(game_state)
+                    else:
+                        print(f"⚠️ {MAX_ILLEGAL_RETRIES} retries exhausted, skipping turn")
+                        illegal_retries = 0
                 continue
 
             if t == "room_joined":
@@ -760,6 +773,7 @@ async def main():
                     await try_move(game_state)
 
             elif t == "move":
+                illegal_retries = 0  # reset on any successful move (ours or opponent's)
                 game_state = msg.get("gameState", game_state)
                 if game_state and not game_state.get("finished"):
                     if is_my_turn(game_state):

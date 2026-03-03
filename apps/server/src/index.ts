@@ -370,7 +370,8 @@ async function handleMatchEnd(room: any, result: any) {
   const allPlayers = Object.values<any>(room.players);
   const p1 = allPlayers[0];
   const p2 = allPlayers[1];
-  const resultStr = draw ? `Draw (${reason})` : winner ? `${winner} wins (${reason})` : 'Unknown';
+  const winnerNick = allPlayers.find((p:any) => p.side === String(winner))?.nick ?? winner?.toString() ?? '?';
+  const resultStr = draw ? `Draw (${reason})` : winner ? `${winner} wins (${winnerNick})` : 'Unknown';
 
   saveMatch({
     id: room.matchId, gameType: room.gameType, roomId: room.id,
