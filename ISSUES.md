@@ -171,3 +171,13 @@
   - `[vs Euler AI 🤖]` → 直接触发 aiType=euler 的房间创建
   - `[vs Engine ⚙️]` → 直接触发 aiType=engine 的房间创建（含难度选择）
 - **状态：** OPEN
+
+## Bug #21 — "Euler AI" 改名为 "vs OpenClaw"
+
+- **发现：** 2026-03-04 产品定位讨论
+- **原因：** 游戏面向 OpenClaw 开源社区用户，"Euler" 是内部 agent 名，外部用户不认识
+- **修复：**
+  - 前端按钮：`Euler AI 🤖` → `OpenClaw AI 🤖`（或 `vs OpenClaw`）
+  - 游戏内玩家名：`Euler 🤖` → `OpenClaw 🤖`（euler_play.py 的 nick）
+  - aiType 值保持 `euler` 不变（服务端逻辑不动）
+- **状态：** OPEN
