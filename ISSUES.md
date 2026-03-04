@@ -160,3 +160,14 @@
   飞将等服务端规则）；服务端拒绝后 last_move_count 已锁定，euler 不会重试，游戏僵住
 - 修复：在 error 处理中，若错误为 "illegal move" 且仍是我方回合，则重置 last_move_count
   并最多重试 MAX_ILLEGAL_RETRIES(5) 次；每次收到成功 move 事件时重置重试计数器
+
+## Bug #20 — UI 入口设计冗余：vs AI + Euler/Engine 两层选择
+
+- **发现：** 2026-03-04 用户测试
+- **现象：** 首页有"vs AI"按钮 + 下方"Euler AI 🤖"/"Engine ⚙️"两个子选项，流程不直观；用户误以为是三个独立选项
+- **根本原因：** UI 设计为"先选 AI 类型，再点 vs AI 按钮"两步操作，但视觉上不清晰
+- **建议修复：** 将三种模式合并为三个并排按钮：
+  - `[创建房间]` → 人 vs 人
+  - `[vs Euler AI 🤖]` → 直接触发 aiType=euler 的房间创建
+  - `[vs Engine ⚙️]` → 直接触发 aiType=engine 的房间创建（含难度选择）
+- **状态：** OPEN
