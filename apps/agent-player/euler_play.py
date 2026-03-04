@@ -20,7 +20,8 @@ from urllib.error import URLError
 import websockets
 
 EULER_NICK = "Euler 🤖"
-ASK_MOVE_PATH = "/home/server1.0/.openclaw/workspace/skills/game-player/ask_move.py"
+ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                             "..", "..", "..", "..", "skills", "game-player", "ask_move.py")
 
 # ── Engine config ─────────────────────────────────────────────────────────────
 
@@ -783,6 +784,9 @@ async def main():
 
         async def pick_move(gs):
             nonlocal mode, difficulty
+            # Bug #22: Skip immediately if game is already over
+            if not gs or gs.get("finished"):
+                return None
             gt = gs.get("gameType")
 
             # AI mode (LLM via ask_move.py) for chess/xiangqi
@@ -860,7 +864,11 @@ async def main():
                 board = [row[:] for row in gs["board"]]
                 return gomoku_move(board, gs["size"], gs["currentPlayer"])
             elif gt == "chess":
-                return chess_move(gs.get("legalMoves", []))
+                legal = gs.get("legalMoves", [])
+                if not legal:
+                    print("⚠️ No legal moves for chess — game should be over (checkmate/stalemate)")
+                    return None
+                return chess_move(legal)
             elif gt == "xiangqi":
                 return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red"))
             return None
@@ -883,6 +891,10 @@ async def main():
             move = await pick_move(gs)
             if move:
                 await send_ws({"type": "move", "move": move})
+            else:
+                # Bug #22: no move means no legal moves or game finished — server handles it
+                if gs and not gs.get("finished"):
+                    print("⚠️ No move returned — no legal moves, waiting for server to end game")
             return move
 
         ready_sent = False

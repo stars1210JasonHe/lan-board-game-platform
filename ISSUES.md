@@ -181,3 +181,34 @@
   - 游戏内玩家名：`Euler 🤖` → `OpenClaw 🤖`（euler_play.py 的 nick）
   - aiType 值保持 `euler` 不变（服务端逻辑不动）
 - **状态：** OPEN
+
+## Bug #22 — AI Silent on Checkmate/No Legal Moves
+
+**Date:** 2026-03-04
+**Severity:** Medium
+**Status:** FIXED
+
+**Description:**
+When AI has no legal moves (checkmate or stalemate), `ask_move.py` exits with code 1 and returns nothing.
+`euler_play.py` receives `None` and silently skips sending a move. Game server waits forever.
+
+**Root Cause:**
+```python
+# ask_move.py
+if not legal_moves:
+    sys.exit(1)  # silent exit, no output
+
+# euler_play.py
+move = await pick_move(gs)
+if move:  # None check → does nothing
+    await send_ws({"type": "move", ...})
+```
+
+**Expected Behavior:**
+AI should detect no legal moves and either:
+- Send a resign message
+- Or let the server's own checkmate detection handle it (server should end game automatically)
+
+**Fix:**
+Check `gs.get("finished")` before trying to pick a move. If the game state says finished, skip.
+Also handle the case where `legal_moves` is empty in `pick_move()`.
