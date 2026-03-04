@@ -14,12 +14,13 @@ Usage:
   python3 euler_play.py <room_id> --mode engine --difficulty hard
   python3 euler_play.py --list   # list open rooms
 """
-import asyncio, json, random, sys, argparse, re, subprocess
+import asyncio, json, os, random, sys, argparse, re, subprocess
 from urllib.request import urlopen, Request
 from urllib.error import URLError
 import websockets
 
 EULER_NICK = "Euler 🤖"
+ASK_MOVE_PATH = "/home/server1.0/.openclaw/workspace/skills/game-player/ask_move.py"
 
 # ── Engine config ─────────────────────────────────────────────────────────────
 
@@ -521,6 +522,150 @@ def xiangqi_move(board_rows, side):
     return None
 
 
+# ── AI move (via ask_move.py) ─────────────────────────────────────────────────
+
+def ai_xiangqi_move(board_rows, side, ai_engine='openclaw', ai_model=None):
+    """Get a xiangqi move from ask_move.py (LLM-based)."""
+    # Build legal moves using the local generator
+    upper = side == 'red'
+    board = [list(row) for row in board_rows]
+
+    def in_bounds(r, c):
+        return 0 <= r <= 9 and 0 <= c <= 8
+    def is_enemy(r, c):
+        p = board[r][c]
+        if p == ' ': return False
+        return (p == p.upper()) != upper
+    def is_empty(r, c):
+        return board[r][c] == ' '
+    def can_target(r, c):
+        return in_bounds(r, c) and (is_empty(r, c) or is_enemy(r, c))
+
+    # Reuse xiangqi_move's piece_moves logic to get legal moves list
+    legal_moves = []
+    for r, row in enumerate(board):
+        for c, p in enumerate(row):
+            if p == ' ': continue
+            if (p == p.upper()) != upper: continue
+            t = p.upper()
+            targets = []
+            if t == 'K':
+                palace_rows = range(0, 3) if upper else range(7, 10)
+                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                    nr, nc = r+dr, c+dc
+                    if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
+                        targets.append((nr, nc))
+            elif t == 'A':
+                palace_rows = range(0, 3) if upper else range(7, 10)
+                for dr, dc in [(1,1),(1,-1),(-1,1),(-1,-1)]:
+                    nr, nc = r+dr, c+dc
+                    if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
+                        targets.append((nr, nc))
+            elif t == 'B':
+                home = range(0, 5) if upper else range(5, 10)
+                for dr, dc in [(2,2),(2,-2),(-2,2),(-2,-2)]:
+                    nr, nc = r+dr, c+dc
+                    mr, mc = r+dr//2, c+dc//2
+                    if in_bounds(nr, nc) and nr in home and is_empty(mr, mc) and can_target(nr, nc):
+                        targets.append((nr, nc))
+            elif t == 'N':
+                for dr, dc, br, bc in [(-1,0,-2,1),(-1,0,-2,-1),(1,0,2,1),(1,0,2,-1),(0,-1,1,-2),(0,-1,-1,-2),(0,1,1,2),(0,1,-1,2)]:
+                    sr, sc = r+dr, c+dc
+                    if in_bounds(sr, sc) and is_empty(sr, sc):
+                        nr, nc = r+br, c+bc
+                        if in_bounds(nr, nc) and can_target(nr, nc):
+                            targets.append((nr, nc))
+            elif t == 'R':
+                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                    nr, nc = r+dr, c+dc
+                    while in_bounds(nr, nc):
+                        if is_empty(nr, nc): targets.append((nr, nc))
+                        else:
+                            if is_enemy(nr, nc): targets.append((nr, nc))
+                            break
+                        nr += dr; nc += dc
+            elif t == 'C':
+                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
+                    nr, nc = r+dr, c+dc
+                    jumped = False
+                    while in_bounds(nr, nc):
+                        if not jumped:
+                            if is_empty(nr, nc): targets.append((nr, nc))
+                            else: jumped = True
+                        else:
+                            if not is_empty(nr, nc):
+                                if is_enemy(nr, nc): targets.append((nr, nc))
+                                break
+                        nr += dr; nc += dc
+            elif t == 'P':
+                fwd = 1 if upper else -1
+                crossed = r >= 5 if upper else r <= 4
+                nr, nc = r+fwd, c
+                if in_bounds(nr, nc) and can_target(nr, nc): targets.append((nr, nc))
+                if crossed:
+                    for dc in [-1, 1]:
+                        if in_bounds(r, c+dc) and can_target(r, c+dc): targets.append((r, c+dc))
+            for nr, nc in targets:
+                legal_moves.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
+
+    if not legal_moves:
+        return xiangqi_move(board_rows, side)
+
+    board_json = json.dumps({"board": board_rows, "legalMoves": legal_moves})
+    cmd = [sys.executable, ASK_MOVE_PATH, "--game", "xiangqi", "--side", side,
+           "--board-json", board_json, "--engine", ai_engine]
+    if ai_model:
+        cmd += ["--model", ai_model]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        line = result.stdout.strip()
+        parts = line.split(",")
+        if len(parts) == 4:
+            return {"fromRow": int(parts[0]), "fromCol": int(parts[1]),
+                    "toRow": int(parts[2]), "toCol": int(parts[3])}
+    except Exception as e:
+        print(f"⚠️ ask_move.py error: {e}")
+    return xiangqi_move(board_rows, side)
+
+
+def ai_chess_move(legal_moves, board_rows=None, side='white', ai_engine='openclaw', ai_model=None):
+    """Get a chess move from ask_move.py (LLM-based)."""
+    if not legal_moves:
+        return chess_move(legal_moves)
+
+    # Build legalMoves in fromRow,fromCol,toRow,toCol format from UCI
+    legal_move_dicts = []
+    for uci in legal_moves:
+        if len(uci) >= 4:
+            fc = ord(uci[0]) - ord('a')
+            fr = 8 - int(uci[1])
+            tc = ord(uci[2]) - ord('a')
+            tr = 8 - int(uci[3])
+            legal_move_dicts.append({"fromRow": fr, "fromCol": fc, "toRow": tr, "toCol": tc})
+
+    if not legal_move_dicts or not board_rows:
+        return chess_move(legal_moves)
+
+    board_json = json.dumps({"board": board_rows, "legalMoves": legal_move_dicts})
+    cmd = [sys.executable, ASK_MOVE_PATH, "--game", "chess", "--side", side,
+           "--board-json", board_json, "--engine", ai_engine]
+    if ai_model:
+        cmd += ["--model", ai_model]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        line = result.stdout.strip()
+        parts = line.split(",")
+        if len(parts) == 4:
+            fr, fc, tr, tc = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+            # Convert back to UCI
+            uci = chr(ord('a') + fc) + str(8 - fr) + chr(ord('a') + tc) + str(8 - tr)
+            if uci in legal_moves or any(m.startswith(uci) for m in legal_moves):
+                return {"uci": uci}
+    except Exception as e:
+        print(f"⚠️ ask_move.py error: {e}")
+    return chess_move(legal_moves)
+
+
 # ── Main client ───────────────────────────────────────────────────────────────
 
 async def main():
@@ -531,10 +676,15 @@ async def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-ai-chat", action="store_true",
                         help="Disable AI chat, use canned replies (fallback)")
-    parser.add_argument("--mode", choices=["euler", "engine"], default=None,
-                        help="AI mode: euler (LLM) or engine (Stockfish/Fairy-Stockfish)")
+    parser.add_argument("--mode", choices=["euler", "engine", "ai"], default=None,
+                        help="AI mode: euler (LLM via server), engine (Stockfish), ai (LLM via ask_move.py)")
     parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
                         help="Engine difficulty level")
+    parser.add_argument("--ai-engine", default="openclaw",
+                        choices=["openclaw", "anthropic", "openrouter", "ollama"],
+                        help="AI engine for --mode ai (default: openclaw)")
+    parser.add_argument("--ai-model", default=None,
+                        help="Model name for --mode ai (optional)")
     args = parser.parse_args()
 
     ai_chat = not args.no_ai_chat
@@ -634,6 +784,43 @@ async def main():
         async def pick_move(gs):
             nonlocal mode, difficulty
             gt = gs.get("gameType")
+
+            # AI mode (LLM via ask_move.py) for chess/xiangqi
+            if mode == 'ai' and gt in ('chess', 'xiangqi'):
+                try:
+                    if gt == 'chess':
+                        legal = gs.get('legalMoves', [])
+                        fen = gs.get('fen', '')
+                        # Build board rows from FEN for the LLM
+                        board_rows = []
+                        if fen:
+                            for rank in fen.split(' ')[0].split('/'):
+                                row = ''
+                                for ch in rank:
+                                    if ch.isdigit():
+                                        row += '.' * int(ch)
+                                    else:
+                                        row += ch
+                                board_rows.append(row)
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: ai_chess_move(legal, board_rows, my_side or 'white',
+                                                        args.ai_engine, args.ai_model)
+                        )
+                        if result:
+                            print(f"🧠 AI chose: {result}")
+                            return result
+                    elif gt == 'xiangqi':
+                        board_rows = gs.get('board', [])
+                        cur = gs.get('currentPlayer', 'red')
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: ai_xiangqi_move(board_rows, cur,
+                                                           args.ai_engine, args.ai_model)
+                        )
+                        if result:
+                            print(f"🧠 AI chose: {result}")
+                            return result
+                except Exception as e:
+                    print(f"⚠️ AI mode error: {e}, falling back")
 
             # Engine mode for chess/xiangqi
             if mode == 'engine' and gt in ('chess', 'xiangqi'):
@@ -748,7 +935,7 @@ async def main():
                 if not cli_mode_set:
                     room_ai_type = room.get("aiType")
                     room_difficulty = room.get("difficulty")
-                    if room_ai_type in ('euler', 'engine'):
+                    if room_ai_type in ('euler', 'engine', 'ai'):
                         mode = room_ai_type
                     if room_difficulty in VALID_DIFFICULTIES:
                         difficulty = room_difficulty

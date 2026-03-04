@@ -9,7 +9,7 @@
 <meta http-equiv="Expires" content="0"/>
 <script>
 // Force reload if version mismatch (cache buster)
-const APP_VERSION = '20260303-0100';
+const APP_VERSION = '20260304-0100';
 const cached = localStorage.getItem('app_version');
 if (cached && cached !== APP_VERSION) { localStorage.setItem('app_version', APP_VERSION); location.reload(true); }
 localStorage.setItem('app_version', APP_VERSION);
@@ -105,12 +105,8 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
       <option value="xiangqi">Xiangqi</option>
     </select>
     <button class="btn btn-success" onclick="createRoom(false)">Create Room</button>
-    <button class="btn btn-secondary" onclick="createRoom(true)">vs AI</button>
-  </div>
-  <div style="display:flex;justify-content:center;gap:8px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
-    <span style="color:#aaa;font-size:0.9rem">AI Type:</span>
-    <button class="btn btn-small" id="btn-ai-euler" onclick="setAiType('euler')" style="background:#e94560;color:#fff">Euler AI 🤖</button>
-    <button class="btn btn-small" id="btn-ai-engine" onclick="setAiType('engine')" style="background:#0f3460;color:#eee">Engine ⚙️</button>
+    <button class="btn btn-primary" onclick="createRoomAi('euler')">vs OpenClaw AI 🤖</button>
+    <button class="btn btn-secondary" onclick="showEngineOptions()">vs Engine ⚙️</button>
     <select id="difficulty-select" style="display:none;padding:6px 12px;border-radius:8px;border:1px solid #333;background:#16213e;color:#eee;font-size:0.9rem">
       <option value="beginner">Beginner</option>
       <option value="easy">Easy</option>
@@ -118,6 +114,7 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
       <option value="hard">Hard</option>
       <option value="max">Max</option>
     </select>
+    <button class="btn btn-secondary btn-small" id="btn-engine-go" style="display:none" onclick="createRoomAi('engine')">Start</button>
   </div>
   <div id="rooms-container" class="rooms-grid"><p style="color:#aaa;text-align:center">No rooms yet.</p></div>
 </div>
@@ -191,7 +188,7 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 <script>
 const WS_URL = `ws://${location.host}`;
 let ws = null, clientId = null, myNick = '', myRoom = null, mySide = null;
-let gameType = 'gomoku', gameState = null, selectedFrom = null, selectedAiType = 'euler';
+let gameType = 'gomoku', gameState = null, selectedFrom = null;
 
 // ── Nick persistence ──────────────────────────────────────────────────────────
 window.onload = () => {
@@ -262,11 +259,23 @@ function renderRooms(rooms) {
   `).join('');
 }
 
-function setAiType(type) {
-  selectedAiType = type;
-  document.getElementById('btn-ai-euler').style.background = type === 'euler' ? '#e94560' : '#0f3460';
-  document.getElementById('btn-ai-engine').style.background = type === 'engine' ? '#e94560' : '#0f3460';
-  document.getElementById('difficulty-select').style.display = type === 'engine' ? 'inline-block' : 'none';
+function showEngineOptions() {
+  const sel = document.getElementById('difficulty-select');
+  const btn = document.getElementById('btn-engine-go');
+  const visible = sel.style.display !== 'none';
+  sel.style.display = visible ? 'none' : 'inline-block';
+  btn.style.display = visible ? 'none' : 'inline-block';
+}
+
+function createRoomAi(aiType) {
+  myNick = getNick();
+  gameType = document.getElementById('game-select').value;
+  ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
+  const msg = { type: 'create_room', gameType, withAi: true, aiType };
+  if (aiType === 'engine') {
+    msg.difficulty = document.getElementById('difficulty-select').value;
+  }
+  send(msg);
 }
 
 function createRoom(withAi) {
@@ -274,10 +283,6 @@ function createRoom(withAi) {
   gameType = document.getElementById('game-select').value;
   ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
   const msg = { type: 'create_room', gameType, withAi };
-  if (withAi) {
-    msg.aiType = selectedAiType;
-    msg.difficulty = document.getElementById('difficulty-select').value;
-  }
   send(msg);
 }
 
