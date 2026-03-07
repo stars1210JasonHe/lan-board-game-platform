@@ -66,6 +66,7 @@ export class GomokuGame {
   }
 
   stateDict() {
+    const lastM = this.moveHistory.length > 0 ? this.moveHistory[this.moveHistory.length - 1] : null;
     return {
       gameType: 'gomoku',
       board: this.board,
@@ -75,6 +76,9 @@ export class GomokuGame {
       finished: this.finished,
       moveCount: this.moveHistory.length,
       size: this.size,
+      history: this.moveHistory.map(m => `${m.player === BLACK ? 'B' : 'W'}:${m.row},${m.col}`).join(';'),
+      legalMovesCount: this.finished ? 0 : (this.size * this.size - this.moveHistory.length),
+      lastMove: lastM ? `${lastM.row},${lastM.col}` : null,
     };
   }
 }

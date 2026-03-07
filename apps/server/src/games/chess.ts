@@ -53,12 +53,16 @@ export class ChessGame {
   }
 
   stateDict() {
+    const lastM = this.moveHistory.length > 0 ? this.moveHistory[this.moveHistory.length - 1] : null;
     return {
       gameType: 'chess',
       fen: this.chess.fen(),
+      pgn: this.chess.pgn(),
       currentPlayer: this.currentSide(),
       currentPlayerName: this.currentSide(),
       legalMoves: this.finished ? [] : this.legalMoves(),
+      legalMovesSAN: this.finished ? [] : this.chess.moves(),
+      lastMove: lastM ? lastM.san : null,
       winner: this.winner,
       winnerReason: this.winnerReason,
       finished: this.finished,

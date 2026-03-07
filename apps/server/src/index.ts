@@ -9,6 +9,7 @@ import Database from 'better-sqlite3';
 import { GomokuGame, BLACK as GB, WHITE as GW } from './games/gomoku.js';
 import { ChessGame } from './games/chess.js';
 import { XiangqiGame } from './games/xiangqi.js';
+import { Chess } from 'chess.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = 8765;
@@ -490,53 +491,162 @@ function callOpenclawAgent(sessionId: string, message: string, timeout: number):
   });
 }
 
-function boardToCompactGrid(board: number[][], size: number): string {
-  const lines: string[] = ['   ' + Array.from({length: size}, (_, i) => String(i).padStart(2)).join(' ')];
-  for (let r = 0; r < size; r++) {
-    let row = String(r).padStart(2) + ' ';
-    for (let c = 0; c < size; c++) {
-      const cell = board[r][c];
-      row += cell === 1 ? ' X ' : cell === 2 ? ' O ' : ' . ';
-    }
-    lines.push(row);
-  }
-  return lines.join('\n');
-}
-
 async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
   try {
     const body = JSON.parse(await readBody(req));
-    const { board, size, currentPlayer, currentPlayerName, moveCount, gameType, side } = body;
+    const gameType: string = body.gameType || 'gomoku';
+    const side: string = body.side || '';
+    const moveCount: number = body.moveCount ?? 0;
+    const MAX_RETRIES = 3;
 
-    if (!Array.isArray(board) || typeof size !== 'number' || size < 1 || size > 19 || gameType !== 'gomoku') {
-      jsonResponse(res, 400, { error: 'Invalid request: gomoku board (array) and valid size required' });
+    if (gameType === 'chess') {
+      const fen: string = body.fen || '';
+      const pgn: string = body.pgn || body.history || '';
+      const legalMovesSAN: string[] = body.legalMovesSAN || [];
+      const inCheck: boolean = body.inCheck || false;
+
+      if (!fen || !legalMovesSAN.length) {
+        jsonResponse(res, 400, { error: 'chess: fen and legalMovesSAN required' });
+        return;
+      }
+
+      const checkStr = inCheck ? ' IN CHECK.' : '';
+      const basePrompt = `Chess move ${moveCount + 1}. You: ${side}.${checkStr}
+FEN: ${fen}
+History: ${pgn}
+Legal moves: ${legalMovesSAN.join(', ')}
+Pick one move (reply with just the SAN notation, e.g. Nf3):`;
+
+      const parseChessMove = (reply: string): { uci: string } | null => {
+        const san = reply.trim().split(/[\s\n]+/)[0].replace(/[.!?]+$/, '');
+        if (!legalMovesSAN.includes(san)) return null;
+        try {
+          const tempChess = new Chess(fen);
+          const m = tempChess.move(san);
+          if (!m) return null;
+          return { uci: m.from + m.to + (m.promotion || '') };
+        } catch { return null; }
+      };
+
+      const randomChessMove = (): { uci: string } => {
+        const san = legalMovesSAN[Math.floor(Math.random() * legalMovesSAN.length)];
+        const tempChess = new Chess(fen);
+        const m = tempChess.move(san);
+        return { uci: m!.from + m!.to + (m!.promotion || '') };
+      };
+
+      let prompt = basePrompt;
+      try {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          const reply = await callOpenclawAgent('euler-chess-moves', prompt, 30);
+          const move = parseChessMove(reply);
+          if (move) { jsonResponse(res, 200, move); return; }
+          prompt = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesSAN.join(', ')}. Reply with just one SAN move:`;
+        }
+      } catch (e: any) {
+        console.error('Chess AI error:', e.message);
+      }
+      jsonResponse(res, 200, randomChessMove());
       return;
     }
 
-    const grid = boardToCompactGrid(board, size);
-    const mySymbol = side === 'black' || currentPlayer === 1
-      ? 'X (black, player 1)' : 'O (white, player 2)';
+    if (gameType === 'xiangqi') {
+      const fen: string = body.fen || '';
+      const history: string = body.history || '';
+      const legalMovesCoord: string[] = body.legalMovesCoord || [];
+      const inCheck: boolean = body.inCheck || false;
 
-    const prompt = `You are playing Gomoku on a ${size}x${size} board. Get 5 in a row to win.
-You are: ${mySymbol}. Move #${(moveCount ?? 0) + 1}.
-Board (X=black, O=white, .=empty):
-${grid}
-Reply with ONLY your move as: row,col`;
-
-    try {
-      const reply = await callOpenclawAgent('euler-gomoku-moves', prompt, 30);
-      const match = reply.match(/(\d+)\s*[,\s]\s*(\d+)/);
-      if (match) {
-        const row = parseInt(match[1]), col = parseInt(match[2]);
-        if (row >= 0 && row < size && col >= 0 && col < size && board[row][col] === 0) {
-          jsonResponse(res, 200, { row, col });
-          return;
-        }
+      if (!legalMovesCoord.length) {
+        jsonResponse(res, 400, { error: 'xiangqi: legalMovesCoord required' });
+        return;
       }
-      jsonResponse(res, 200, { error: 'AI returned invalid move, use fallback', raw: reply });
-    } catch (e: any) {
-      jsonResponse(res, 200, { error: `AI unavailable: ${e.message}` });
+
+      const coordSet = new Set(legalMovesCoord);
+      const checkStr = inCheck ? ' IN CHECK.' : '';
+      const basePrompt = `Xiangqi move ${moveCount + 1}. You: ${side}.${checkStr}
+Position: ${fen}
+History: ${history}
+Legal moves: ${legalMovesCoord.join(', ')}
+Pick one move (reply with the coordinate, e.g. b0c2):`;
+
+      const parseXiangqiMove = (reply: string): { fromRow: number; fromCol: number; toRow: number; toCol: number } | null => {
+        const m = reply.trim().match(/\b([a-i])(\d)([a-i])(\d)\b/);
+        if (!m) return null;
+        const coord = m[1] + m[2] + m[3] + m[4];
+        if (!coordSet.has(coord)) return null;
+        return {
+          fromCol: m[1].charCodeAt(0) - 97, fromRow: parseInt(m[2]),
+          toCol: m[3].charCodeAt(0) - 97, toRow: parseInt(m[4]),
+        };
+      };
+
+      const randomXiangqiMove = () => {
+        const coord = legalMovesCoord[Math.floor(Math.random() * legalMovesCoord.length)];
+        return {
+          fromCol: coord.charCodeAt(0) - 97, fromRow: parseInt(coord[1]),
+          toCol: coord.charCodeAt(2) - 97, toRow: parseInt(coord[3]),
+        };
+      };
+
+      let prompt = basePrompt;
+      try {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          const reply = await callOpenclawAgent('euler-xiangqi-moves', prompt, 30);
+          const move = parseXiangqiMove(reply);
+          if (move) { jsonResponse(res, 200, move); return; }
+          prompt = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesCoord.join(', ')}. Reply with just one coordinate (e.g. b0c2):`;
+        }
+      } catch (e: any) {
+        console.error('Xiangqi AI error:', e.message);
+      }
+      jsonResponse(res, 200, randomXiangqiMove());
+      return;
     }
+
+    // Gomoku
+    const { board, size, currentPlayer } = body;
+    if (!Array.isArray(board) || typeof size !== 'number' || size < 1 || size > 19) {
+      jsonResponse(res, 400, { error: 'gomoku: board array and valid size required' });
+      return;
+    }
+
+    const history: string = body.history || '';
+    const legalMovesCount: number = body.legalMovesCount ?? (size * size - (body.moveCount ?? 0));
+    const basePrompt = `Gomoku. You: ${side}. Move ${moveCount + 1}.
+Stones: ${history || 'none'}
+Board size: ${size}x${size}
+Pick coordinates (row,col 0-indexed):`;
+
+    const parseGomokuMove = (reply: string, bd: number[][]): { row: number; col: number } | null => {
+      const match = reply.match(/(\d+)\s*[,\s]\s*(\d+)/);
+      if (!match) return null;
+      const row = parseInt(match[1]), col = parseInt(match[2]);
+      if (row >= 0 && row < size && col >= 0 && col < size && bd[row][col] === 0)
+        return { row, col };
+      return null;
+    };
+
+    let prompt = basePrompt;
+    try {
+      for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        const reply = await callOpenclawAgent('euler-gomoku-moves', prompt, 30);
+        const move = parseGomokuMove(reply, board);
+        if (move) { jsonResponse(res, 200, move); return; }
+        prompt = `"${reply.trim()}" is not a valid empty cell. Reply with row,col (0-indexed, must be empty):`;
+      }
+    } catch (e: any) {
+      console.error('Gomoku AI error:', e.message);
+    }
+    // Fallback: first empty cell near center
+    const center = size >> 1;
+    const empties: { row: number; col: number; dist: number }[] = [];
+    for (let r = 0; r < size; r++)
+      for (let c = 0; c < size; c++)
+        if (board[r][c] === 0)
+          empties.push({ row: r, col: c, dist: Math.abs(r - center) + Math.abs(c - center) });
+    empties.sort((a, b) => a.dist - b.dist);
+    const fallback = empties[Math.floor(Math.random() * Math.min(5, empties.length))];
+    jsonResponse(res, 200, fallback ? { row: fallback.row, col: fallback.col } : { error: 'no moves' });
   } catch (e: any) {
     jsonResponse(res, 400, { error: `Bad request: ${e.message}` });
   }

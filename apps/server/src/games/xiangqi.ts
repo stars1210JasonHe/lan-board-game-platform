@@ -195,12 +195,48 @@ export class XiangqiGame {
     return { ok: true, winner: this.winner, reason: 'resignation' };
   }
 
+  toFEN(): string {
+    const rows: string[] = [];
+    for (let r = 0; r <= 9; r++) {
+      let row = '';
+      let empty = 0;
+      for (let c = 0; c < 9; c++) {
+        const p = this.board[r][c];
+        if (p === ' ') { empty++; }
+        else { if (empty > 0) { row += empty; empty = 0; } row += p; }
+      }
+      if (empty > 0) row += empty;
+      rows.push(row);
+    }
+    const side = this.currentPlayer === 'red' ? 'r' : 'b';
+    return `${rows.join('/')} ${side}`;
+  }
+
+  legalMovesCoord(): string[] {
+    return this.legalMoves().map(m =>
+      String.fromCharCode(97 + m.fromCol) + m.fromRow +
+      String.fromCharCode(97 + m.toCol) + m.toRow
+    );
+  }
+
   stateDict() {
+    const lastM = this.moveHistory.length > 0 ? this.moveHistory[this.moveHistory.length - 1] : null;
+    const lastMoveCoord = lastM
+      ? String.fromCharCode(97 + lastM.fromCol) + lastM.fromRow +
+        String.fromCharCode(97 + lastM.toCol) + lastM.toRow
+      : null;
     return {
       gameType: 'xiangqi',
       board: this.board.map(r => r.join('')),
+      fen: this.toFEN(),
+      history: this.moveHistory.map(m =>
+        String.fromCharCode(97 + m.fromCol) + m.fromRow +
+        String.fromCharCode(97 + m.toCol) + m.toRow
+      ).join(' '),
+      legalMovesCoord: this.finished ? [] : this.legalMovesCoord(),
       currentPlayer: this.currentPlayer,
       currentPlayerName: this.currentPlayer,
+      lastMove: lastMoveCoord,
       winner: this.winner,
       winnerReason: this.winnerReason,
       finished: this.finished,

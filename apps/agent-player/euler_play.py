@@ -52,24 +52,31 @@ def api_post(base_url: str, endpoint: str, data: dict, timeout: float = 35) -> d
 
 
 async def api_move(base_url: str, game_state: dict, side: str) -> dict | None:
-    """Request an AI move from the server API."""
-    data = {
-        "board": game_state.get("board", []),
-        "size": game_state.get("size", 15),
-        "currentPlayer": game_state.get("currentPlayer"),
-        "currentPlayerName": game_state.get("currentPlayerName"),
-        "moveCount": game_state.get("moveCount", 0),
-        "gameType": game_state.get("gameType", "gomoku"),
-        "side": side,
-    }
+    """Request an AI move from the server API (handles chess, xiangqi, and gomoku)."""
+    gt = game_state.get("gameType", "gomoku")
+    # Pass all game state fields; server uses gameType to build the right prompt
+    data = {k: v for k, v in game_state.items() if not isinstance(v, list) or k in ("board", "legalMovesSAN", "legalMovesCoord")}
+    data["side"] = side
     result = await asyncio.get_event_loop().run_in_executor(
         None, lambda: api_post(base_url, "/api/move", data)
     )
-    if result and "row" in result and "col" in result:
+    if not result:
+        return None
+    if "error" in result:
+        print(f"⚠️ AI move: {result['error']}")
+        return None
+    # Chess: returns {uci}
+    if gt == "chess" and "uci" in result:
+        print(f"🧠 AI chose: {result['uci']}")
+        return {"uci": result["uci"]}
+    # Xiangqi: returns {fromRow, fromCol, toRow, toCol}
+    if gt == "xiangqi" and "fromRow" in result:
+        print(f"🧠 AI chose: {result}")
+        return result
+    # Gomoku: returns {row, col}
+    if "row" in result and "col" in result:
         print(f"🧠 AI chose: ({result['row']}, {result['col']})")
         return {"row": result["row"], "col": result["col"]}
-    if result and "error" in result:
-        print(f"⚠️ AI move: {result['error']}")
     return None
 
 
@@ -868,12 +875,22 @@ async def main():
                 board = [row[:] for row in gs["board"]]
                 return gomoku_move(board, gs["size"], gs["currentPlayer"])
             elif gt == "chess":
+                if ai_chat and mode == 'euler':
+                    ai_result = await api_move(base_url, gs, my_side)
+                    if ai_result:
+                        return ai_result
+                    print("⚠️ Chess AI move failed, falling back to local")
                 legal = gs.get("legalMoves", [])
                 if not legal:
                     print("⚠️ No legal moves for chess — game should be over (checkmate/stalemate)")
                     return None
                 return chess_move(legal)
             elif gt == "xiangqi":
+                if ai_chat and mode == 'euler':
+                    ai_result = await api_move(base_url, gs, my_side)
+                    if ai_result:
+                        return ai_result
+                    print("⚠️ Xiangqi AI move failed, falling back to local")
                 return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red"))
             return None
 
