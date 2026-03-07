@@ -56,7 +56,7 @@ const clientRoom: Map<string, string> = new Map();
 
 function makeRoom(gameType: string, hostId: string, hostNick: string) {
   const id = Math.random().toString(36).slice(2,8).toUpperCase();
-  return { id, gameType, hostId, players: {} as Record<string,any>, state: 'waiting', game: null as any, matchId: null as any, startedAt: null, chat: [] as any[], moves: [] as any[], spectators: [] as string[], aiType: 'euler' as string, difficulty: 'medium' as string };
+  return { id, gameType, hostId, players: {} as Record<string,any>, state: 'waiting', game: null as any, matchId: null as any, startedAt: null, chat: [] as any[], moves: [] as any[], spectators: [] as string[], aiType: 'euler' as string, difficulty: 'medium' as string, preferredSide: 'random' as string, swapSides: false };
 }
 
 function roomSummary(room: any) {
@@ -110,13 +110,24 @@ async function sendRoomState(room: any, to?: string) {
 }
 
 function assignSides(room: any) {
-  const pids = Object.keys(room.players).filter(id => !id.startsWith('AI_'));
+  let pids = Object.keys(room.players).filter(id => !id.startsWith('AI_'));
   const aiPids = Object.keys(room.players).filter(id => id.startsWith('AI_'));
-  const all = [...pids, ...aiPids];
   const sides: Record<string,string[]> = {
     chess: ['white','black'], gomoku: ['black','white'], xiangqi: ['red','black']
   };
   const s = sides[room.gameType] ?? ['first','second'];
+  // Apply preferredSide: host (pids[0]) gets their preferred position
+  if (room.preferredSide === 'second') {
+    pids = [...pids].reverse();
+  } else if (room.preferredSide === 'random') {
+    for (let i = pids.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pids[i], pids[j]] = [pids[j], pids[i]];
+    }
+  }
+  let all: string[] = [...pids, ...aiPids];
+  // swapSides toggles each rematch — reverse the full assignment
+  if (room.swapSides) all = [...all].reverse();
   all.forEach((pid, i) => { if (room.players[pid]) room.players[pid].side = s[i] ?? s[s.length-1]; });
 }
 
@@ -669,6 +680,7 @@ wss.on('connection', (ws) => {
       const room = makeRoom(gt, clientId, nick);
       if (msg.aiType && ['euler', 'engine'].includes(msg.aiType)) room.aiType = msg.aiType;
       if (msg.difficulty && ['beginner', 'easy', 'medium', 'hard', 'max'].includes(msg.difficulty)) room.difficulty = msg.difficulty;
+      if (msg.preferredSide && ['first', 'second', 'random'].includes(msg.preferredSide)) room.preferredSide = msg.preferredSide;
       rooms.set(room.id, room);
       room.players[clientId] = { nick, ready: false, isAi: false, side: null };
       room.spectators = [];
@@ -797,6 +809,7 @@ wss.on('connection', (ws) => {
       if (room.state === 'waiting') { await sendRoomState(room, clientId); return; }
       if (room.state === 'playing') return; // can't play_again during active match
       // Full reset (state must be 'finished')
+      room.swapSides = !room.swapSides; // auto-swap sides each rematch
       room.state = 'waiting'; room.game = null; room.matchId = null; room.startedAt = null; room.moves = [];
       for (const p of Object.values<any>(room.players)) { p.ready = p.isAi ? true : false; p.side = null; }
       const resetMsg = addChat(room, 'System', 'Room reset. Ready up for a new match!', true);

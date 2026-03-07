@@ -104,6 +104,11 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
       <option value="chess">Chess</option>
       <option value="xiangqi">Xiangqi</option>
     </select>
+    <select id="side-select" style="padding:6px 12px;border-radius:8px;border:1px solid #333;background:#16213e;color:#eee;font-size:0.9rem">
+      <option value="random">Random (随机)</option>
+      <option value="first">First (先手)</option>
+      <option value="second">Second (后手)</option>
+    </select>
     <button class="btn btn-success" onclick="createRoom(false)">Create Room</button>
     <button class="btn btn-primary" onclick="createRoomAi('euler')">vs OpenClaw AI 🤖</button>
     <button class="btn btn-secondary" onclick="showEngineOptions()">vs Engine ⚙️</button>
@@ -271,7 +276,7 @@ function createRoomAi(aiType) {
   myNick = getNick();
   gameType = document.getElementById('game-select').value;
   ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
-  const msg = { type: 'create_room', gameType, withAi: true, aiType };
+  const msg = { type: 'create_room', gameType, withAi: true, aiType, preferredSide: document.getElementById('side-select').value };
   if (aiType === 'engine') {
     msg.difficulty = document.getElementById('difficulty-select').value;
   }
@@ -282,7 +287,7 @@ function createRoom(withAi) {
   myNick = getNick();
   gameType = document.getElementById('game-select').value;
   ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
-  const msg = { type: 'create_room', gameType, withAi };
+  const msg = { type: 'create_room', gameType, withAi, preferredSide: document.getElementById('side-select').value };
   send(msg);
 }
 
