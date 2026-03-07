@@ -21,7 +21,7 @@ import websockets
 
 EULER_NICK = "Euler 🤖"
 ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "..", "..", "..", "..", "skills", "game-player", "ask_move.py")
+                             "..", "..", "..", "skills", "game-player", "ask_move.py")
 
 # ── Engine config ─────────────────────────────────────────────────────────────
 
@@ -620,6 +620,8 @@ def ai_xiangqi_move(board_rows, side, ai_engine='openclaw', ai_model=None):
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         line = result.stdout.strip()
+        if line == 'resign':
+            return {'resign': True}
         parts = line.split(",")
         if len(parts) == 4:
             return {"fromRow": int(parts[0]), "fromCol": int(parts[1]),
@@ -655,6 +657,8 @@ def ai_chess_move(legal_moves, board_rows=None, side='white', ai_engine='opencla
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
         line = result.stdout.strip()
+        if line == 'resign':
+            return {'resign': True}
         parts = line.split(",")
         if len(parts) == 4:
             fr, fc, tr, tc = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
@@ -890,7 +894,11 @@ async def main():
             last_move_count = mc
             move = await pick_move(gs)
             if move:
-                await send_ws({"type": "move", "move": move})
+                if isinstance(move, dict) and move.get('resign'):
+                    print("🏳️ No legal moves — resigning")
+                    await send_ws({"type": "resign"})
+                else:
+                    await send_ws({"type": "move", "move": move})
             else:
                 # Bug #22: no move means no legal moves or game finished — server handles it
                 if gs and not gs.get("finished"):

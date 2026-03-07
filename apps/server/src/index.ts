@@ -161,6 +161,12 @@ async function maybeAiMove(room: any) {
   const timer = setTimeout(async () => {
     if (!room.game || room.game.finished || room.state !== 'playing') return;
     try {
+      const legal = room.game.legalMoves?.() ?? [];
+      if (!legal.length) {
+        const result = room.game.resign?.(curSide) ?? { ok: true, winner: null, reason: 'no_legal_moves' };
+        if (room.game.finished) await handleMatchEnd(room, result);
+        return;
+      }
       const move = await fetchAiMove(gt, room.game, curSide, room);
       if (!move) return;
       const result = room.game.applyMove(move);
@@ -355,7 +361,6 @@ async function handleMatchEnd(room: any, result: any) {
   let winner = result.winner ?? game.winner ?? null;
   // Gomoku stores winner as 1/2 (number) — convert to side name
   if (winner === 1 || winner === 2) {
-    const sides = Object.entries<any>(room.players).find(([,p]) => true)?.[1]?.side;
     // Find player with this number
     const winnerEntry = Object.values<any>(room.players).find((p:any) => {
       if (p.side === 'black' && winner === 1) return true;
@@ -563,7 +568,7 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
 function spawnEulerAgent(roomId: string, difficulty: string) {
   const agentPath = join(__dirname, '..', '..', 'agent-player', 'euler_play.py');
   console.log(`[euler] Spawning agent for room ${roomId} (difficulty=${difficulty})`);
-  const proc = spawn('python3', [agentPath, roomId, '--mode', 'euler', '--difficulty', difficulty, '--no-ai-chat'], {
+  const proc = spawn('python3', [agentPath, roomId, '--mode', 'ai', '--ai-engine', 'openclaw', '--difficulty', difficulty], {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: join(__dirname, '..', '..', 'agent-player'),
   });
