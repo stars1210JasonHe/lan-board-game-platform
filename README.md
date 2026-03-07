@@ -1,34 +1,193 @@
 # LAN Board Game Platform
 
-A real-time multiplayer board game platform for local network play. Supports **Gomoku**, **Chess**, and **Xiangqi** (Chinese Chess) with an optional AI opponent powered by OpenClaw.
+> **Play Gomoku, Chess, and Xiangqi against an AI — or a friend on your LAN — right from your browser.**
+
+A self-hosted board game server built for the sheer joy of playing classic games against an intelligent opponent. Drop it on any machine on your local network, open a browser, and start playing in under a minute.
+
+![screenshot](docs/screenshot.png)
+
+---
+
+## Features
+
+### Three classic games
+
+| Game | Board | Win condition |
+|------|-------|---------------|
+| **Gomoku** (五子棋) | 15×15 grid | First to place 5 stones in a row |
+| **Chess** | 8×8 board | Checkmate the opponent's king |
+| **Xiangqi** (中国象棋) | 10×9 board | Checkmate the opponent's general |
+
+### AI opponents — two flavors
+
+- **OpenClaw AI** — an LLM-powered agent that plays (and chats!) like a real opponent
+- **Stockfish / Fairy-Stockfish engine** — classical engine for Chess and Xiangqi, with five difficulty levels (Beginner → Max)
+
+### Multiplayer & lobby
+- Real-time play over WebSocket — any device on the LAN can join
+- Room list in the lobby — create, join, or spectate any open room
+- **Spectator mode** — watch a match without interrupting the players
+- **Game chat** — talk trash, celebrate, or just say "gg"
+
+### Game flow
+- **Side selection** — choose to play first, second, or let fate decide (random)
+- **Auto-swap on rematch** — sides alternate automatically after each "Play Again"
+- **Match history** — every completed game is stored in SQLite, accessible via the UI
+
+### UI
+- Dark theme, canvas-rendered boards
+- No installation on the client side — just a URL
+
+---
+
+## Screenshots
+
+![lobby](docs/screenshot-lobby.png)
+![gomoku](docs/screenshot-gomoku.png)
+![chess](docs/screenshot-chess.png)
+![xiangqi](docs/screenshot-xiangqi.png)
+
+---
 
 ## Architecture
 
 ```
- Browser (any device on LAN)
- +-----------------------------------------+
- |  Single-page app (Canvas + WebSocket)   |
- |  Gomoku / Chess / Xiangqi rendering     |
- +-------------------+---------------------+
+Browser (any LAN device)
++------------------------------------------+
+|  Single-page app (Canvas + WebSocket)    |
+|  Gomoku / Chess / Xiangqi rendering      |
++--------------------+---------------------+
                      | WS + HTTP
                      v
- Game Server (Node.js / TypeScript)
- +-----------------------------------------+
- |  WebSocket: rooms, moves, chat, spectate|
- |  HTTP API:  /api/move, /api/chat,       |
- |             /api/history                 |
- |  Engines:   gomoku.ts chess.ts xiangqi.ts|
- |  Database:  SQLite (matches.db)         |
- +-------------------+---------------------+
-                     | WS
+Game Server  (Node.js / TypeScript)
++------------------------------------------+
+|  WebSocket:  rooms, moves, chat, spectate|
+|  HTTP API:   /api/move  /api/chat        |
+|              /api/history                |
+|  Engines:    gomoku.ts  chess.ts         |
+|              xiangqi.ts                  |
+|  Database:   SQLite  (matches.db)        |
++--------------------+---------------------+
+                     | WebSocket (optional)
                      v
- AI Bot Client (Python, optional)
- +-----------------------------------------+
- |  euler_play.py                          |
- |  Moves via /api/move or local algorithm |
- |  Chat via /api/chat or canned replies   |
- +-----------------------------------------+
+AI Bot Client  (Python)
++------------------------------------------+
+|  euler_play.py                           |
+|  Connects as a regular player            |
+|  Moves via OpenClaw API or local engine  |
+|  Chat via OpenClaw API or canned replies |
++------------------------------------------+
 ```
+
+**Key design choices:**
+- The server is the single source of truth — all move validation happens server-side
+- The AI bot (`euler_play.py`) joins a room exactly like a human player would, over WebSocket
+- The frontend is a single `index.html` with no build step — edit and refresh
+
+---
+
+## Quick Start
+
+### 1. Start the server
+
+```bash
+cd apps/server
+npm install
+npm run build
+npm start
+# → http://0.0.0.0:8765
+```
+
+For development with auto-reload:
+
+```bash
+npm run dev
+```
+
+### 2. Open in your browser
+
+On any device on the same network:
+
+```
+http://<server-ip>:8765
+```
+
+- Enter a nickname
+- Create a room (pick your game, side preference, and difficulty)
+- Both players click **Ready** → game starts automatically
+
+### 3. Run the standalone AI bot (optional)
+
+The server already includes a built-in AI mode — but you can also run `euler_play.py` as a separate bot client for testing or advanced use:
+
+```bash
+cd apps/agent-player
+pip install websockets
+
+# See open rooms
+python3 euler_play.py --list --host <server-ip>
+
+# Join a room as Euler AI
+python3 euler_play.py <ROOM_ID> --host <server-ip>
+
+# Join using Stockfish engine at medium difficulty
+python3 euler_play.py <ROOM_ID> --host <server-ip> --mode engine --difficulty medium
+
+# Quiet mode (no AI chat)
+python3 euler_play.py <ROOM_ID> --host <server-ip> --no-ai-chat
+```
+
+---
+
+## AI Modes
+
+The platform offers two fundamentally different ways to play against the computer:
+
+### OpenClaw AI (LLM-powered)
+
+OpenClaw is an LLM-based AI agent. It reasons about the board state using a language model and generates moves accordingly. It also participates in the in-game chat — so it might taunt you after a good move or congratulate you when you win.
+
+This mode is available for Gomoku and is what the "Euler" mode selects. It requires the OpenClaw agent service to be running; if it's unavailable, the server falls back to a local minimax algorithm.
+
+**Best for:** Gomoku. Personality included.
+
+### Stockfish / Fairy-Stockfish (classical engine)
+
+For Chess and Xiangqi, the platform uses battle-tested open-source engines:
+- **Stockfish** for Chess (`/usr/games/stockfish`)
+- **Fairy-Stockfish** for Xiangqi (`/usr/games/fairy-stockfish`)
+
+Five difficulty levels map to Stockfish skill levels and thinking time:
+
+| Difficulty | Skill level | Think time |
+|------------|-------------|------------|
+| Beginner   | 2           | 200 ms     |
+| Easy       | 6           | 500 ms     |
+| Medium     | 12          | 1 s        |
+| Hard       | 16          | 2 s        |
+| Max        | 20          | 3 s        |
+
+**Best for:** Chess and Xiangqi. Ruthlessly efficient at Max.
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Server runtime | Node.js 20+ |
+| Server language | TypeScript 5.3+ |
+| WebSocket | `ws` 8.16 |
+| Chess rules | `chess.js` 1.0 |
+| Database | SQLite via `better-sqlite3` 9.4 |
+| ID generation | `uuid` 9.0 |
+| Frontend | Vanilla JS + HTML5 Canvas (no framework, no build) |
+| AI bot | Python 3 + `websockets` |
+| Chess engine | Stockfish |
+| Xiangqi engine | Fairy-Stockfish |
+| LLM AI | OpenClaw agent |
+
+---
 
 ## Project Structure
 
@@ -37,225 +196,35 @@ lan-board-game-platform/
   apps/
     server/
       src/
-        index.ts              # Main server (HTTP + WebSocket)
+        index.ts          # HTTP + WebSocket server (~840 lines)
         games/
-          gomoku.ts           # Gomoku engine (15x15, 5-in-a-row)
-          chess.ts            # Chess engine (chess.js wrapper)
-          xiangqi.ts          # Xiangqi engine (full rules)
+          gomoku.ts        # 15×15 engine, 5-in-a-row detection
+          chess.ts         # chess.js wrapper
+          xiangqi.ts       # Full Xiangqi rules (palace, cannon, flying kings…)
       static/
-        index.html            # Browser client (SPA)
-      package.json
-      tsconfig.json
+        index.html         # Single-file browser client
     agent-player/
-      euler_play.py           # AI bot client
+      euler_play.py        # Standalone AI bot (~1 067 lines)
   docs/
-    RUNBOOK.md                # Quick-start guide
-  README.md
+    RUNBOOK.md             # Operator quick-reference
+  ISSUES.md                # Bug tracker
 ```
 
-## Quick Start
+---
 
-### 1. Start the Server
+## Roadmap
 
-```bash
-cd apps/server
-npm install
-npm run build
-npm start
-# Server: http://0.0.0.0:8765
-```
+Things that would be fun to build next:
 
-Development mode (auto-reload):
+- [ ] **LLM vs LLM mode** — pit two AI models against each other and watch the sparks fly
+- [ ] **ELO rating system** — track skill over time across human and AI players
+- [ ] **Game replay** — step through any match from history move by move
+- [ ] **Multi-model arena** — round-robin tournament across different LLM providers
+- [ ] **More games** — Reversi, Go (9×9 for starters), Checkers
+- [ ] **Mobile-friendly layout** — the canvas works, the UI could be friendlier on small screens
 
-```bash
-npm run dev
-```
-
-### 2. Play in Browser
-
-Open `http://<server-ip>:8765` on any device on the same network.
-
-- Enter a nickname
-- Pick a game type (Gomoku, Chess, or Xiangqi)
-- Click **Create Room** for PvP, or **vs AI** for single-player
-- Both players click **Ready** to start
-
-### 3. Run the AI Bot (Optional)
-
-```bash
-cd apps/agent-player
-pip install websockets
-
-# List open rooms
-python3 euler_play.py --list --host <server-ip>
-
-# Join a specific room
-python3 euler_play.py <ROOM_ID> --host <server-ip>
-
-# Disable AI chat (use canned replies)
-python3 euler_play.py <ROOM_ID> --host <server-ip> --no-ai-chat
-```
-
-## Supported Games
-
-| Game | Board | Win Condition | Engine |
-|------|-------|---------------|--------|
-| **Gomoku** | 15x15 grid | Get 5 stones in a row | Custom TypeScript |
-| **Chess** | 8x8 board | Checkmate opponent's king | chess.js library |
-| **Xiangqi** | 10x9 board | Checkmate opponent's general | Custom TypeScript |
-
-## API Endpoints
-
-### `GET /api/history`
-
-Returns the last 100 completed matches.
-
-**Response:** `200 OK`
-```json
-[
-  {
-    "id": "uuid",
-    "game_type": "gomoku",
-    "room_id": "ABC123",
-    "started_at": "2026-02-28T10:00:00.000Z",
-    "ended_at": "2026-02-28T10:15:00.000Z",
-    "player1": "Alice",
-    "player2": "ChessBot",
-    "winner": "black",
-    "result": "black wins (5-in-a-row)"
-  }
-]
-```
-
-### `POST /api/move`
-
-Request an AI-generated move (Gomoku only). Uses OpenClaw agent with local algorithm fallback.
-
-**Request:**
-```json
-{
-  "board": [[0,0,0,...], ...],
-  "size": 15,
-  "currentPlayer": 1,
-  "currentPlayerName": "black",
-  "moveCount": 5,
-  "gameType": "gomoku",
-  "side": "black"
-}
-```
-
-**Response (success):** `200 OK`
-```json
-{ "row": 7, "col": 7 }
-```
-
-**Response (AI unavailable):** `200 OK`
-```json
-{ "error": "AI unavailable: timeout" }
-```
-
-### `POST /api/chat`
-
-Request an AI chat reply. Uses OpenClaw agent with null fallback.
-
-**Request:**
-```json
-{
-  "text": "Good move!",
-  "gameContext": "game=gomoku, moves=12",
-  "gameType": "gomoku"
-}
-```
-
-**Response:** `200 OK`
-```json
-{ "reply": "Thanks! Your turn" }
-```
-
-Returns `{ "reply": null }` when AI is unavailable.
-
-## WebSocket Protocol
-
-The browser and bot clients communicate with the server over WebSocket (`ws://<host>:8765`).
-
-### Client Messages
-
-| Type | Fields | Description |
-|------|--------|-------------|
-| `identify` | `nick` | Set player nickname |
-| `create_room` | `gameType`, `withAi?` | Create a new room |
-| `join_room` | `roomId` | Join an existing room |
-| `spectate_room` | `roomId` | Watch a room (read-only) |
-| `ready` | — | Toggle ready status |
-| `move` | `move` | Submit a move (format varies by game) |
-| `resign` | — | Resign current match |
-| `chat` | `text` | Send a chat message (max 300 chars) |
-| `play_again` | — | Reset room for new match |
-| `leave_room` | — | Leave current room |
-| `get_rooms` | — | Request room list |
-| `get_history` | — | Request match history |
-
-### Server Messages
-
-| Type | Fields | Description |
-|------|--------|-------------|
-| `identified` | `clientId`, `nick` | Identity confirmed |
-| `rooms_list` | `rooms[]` | List of available rooms |
-| `room_joined` | `roomId` | Room join confirmed |
-| `room_state` | `room` | Full room state update |
-| `match_start` | `sides`, `gameState` | Match started with side assignments |
-| `move` | `side`, `move`, `gameState` | A move was made |
-| `match_end` | `winner`, `draw`, `reason`, `result` | Match finished |
-| `chat` | `message` | Chat message |
-| `player_ready` | `nick`, `ready` | Player readiness changed |
-| `player_left` | `nick` | Player disconnected |
-| `error` | `msg` | Error message |
-
-### Move Formats
-
-- **Gomoku:** `{ row: number, col: number }`
-- **Chess:** `{ uci: string }` (e.g., `"e2e4"`, `"e7e8q"` for promotion)
-- **Xiangqi:** `{ fromRow, fromCol, toRow, toCol }`
-
-## Configuration
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| Server port | `8765` | Set in `apps/server/src/index.ts` |
-| `--host` | `localhost` | Bot: game server hostname |
-| `--port` | `8765` | Bot: game server port |
-| `--no-ai-chat` | off | Bot: use canned replies instead of AI |
-| `--list` | — | Bot: list open rooms and exit |
-
-## Tech Stack
-
-- **Server:** Node.js + TypeScript, WebSocket (`ws`), SQLite (`better-sqlite3`)
-- **Frontend:** Vanilla JS, HTML5 Canvas (no build step)
-- **Chess rules:** chess.js
-- **AI bot:** Python 3 + `websockets`
-- **AI integration:** OpenClaw agent (optional, with local fallbacks)
-
-## Security
-
-- Nicknames are sanitized server-side (HTML-special characters stripped, 30-char limit)
-- All user-generated content is HTML-escaped on the client before rendering
-- Static file serving uses `path.resolve()` containment to prevent path traversal
-- Request body size limited to 1 MB
-- Chat messages truncated to 300 characters (WebSocket) / 500 characters (API)
-- Game type validated against whitelist (`gomoku`, `chess`, `xiangqi`)
-- Move validation is server-authoritative (clients cannot cheat)
-- OpenClaw subprocess calls use `execFile` (not `exec`) with timeouts
-
-## Development
-
-```bash
-cd apps/server
-npm install
-npm run dev    # TypeScript watch mode with tsx
-```
-
-The frontend is a single HTML file (`apps/server/static/index.html`) with embedded CSS and JS. No build step required - just edit and refresh.
+---
 
 ## License
 
-Private / Internal use.
+MIT
