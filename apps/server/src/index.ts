@@ -984,6 +984,7 @@ wss.on('connection', (ws) => {
       // Compare side: gomoku uses numbers (1=black,2=white), chess/xiangqi uses strings
       const curName = gs.currentPlayerName ?? gs.currentPlayer;
       if (player.side !== gs.currentPlayer && player.side !== curName) { ws.send(JSON.stringify({ type: 'error', msg: 'not your turn' })); return; }
+      if (!msg.move) { ws.send(JSON.stringify({ type: 'error', msg: 'move field required' })); return; }
       const result = room.game.applyMove(msg.move);
       if (!result.ok) {
         // FEAT-2: add context-specific hints for invalid moves
