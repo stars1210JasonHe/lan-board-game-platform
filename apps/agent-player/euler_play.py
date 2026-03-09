@@ -823,40 +823,13 @@ async def main():
                 return None
             gt = gs.get("gameType")
 
-            # AI mode (LLM via ask_move.py) for chess/xiangqi
+            # AI mode: use server /api/move endpoint (has legal moves validation + retries)
             if mode == 'ai' and gt in ('chess', 'xiangqi'):
                 try:
-                    if gt == 'chess':
-                        legal = gs.get('legalMoves', [])
-                        fen = gs.get('fen', '')
-                        # Build board rows from FEN for the LLM
-                        board_rows = []
-                        if fen:
-                            for rank in fen.split(' ')[0].split('/'):
-                                row = ''
-                                for ch in rank:
-                                    if ch.isdigit():
-                                        row += '.' * int(ch)
-                                    else:
-                                        row += ch
-                                board_rows.append(row)
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: ai_chess_move(legal, board_rows, my_side or 'white',
-                                                        args.ai_engine, args.ai_model)
-                        )
-                        if result:
-                            print(f"🧠 AI chose: {result}")
-                            return result
-                    elif gt == 'xiangqi':
-                        board_rows = gs.get('board', [])
-                        cur = gs.get('currentPlayer', 'red')
-                        result = await asyncio.get_event_loop().run_in_executor(
-                            None, lambda: ai_xiangqi_move(board_rows, cur,
-                                                           args.ai_engine, args.ai_model)
-                        )
-                        if result:
-                            print(f"🧠 AI chose: {result}")
-                            return result
+                    ai_result = await api_move(base_url, gs, my_side)
+                    if ai_result:
+                        return ai_result
+                    print(f"⚠️ AI mode /api/move failed for {gt}, falling back")
                 except Exception as e:
                     print(f"⚠️ AI mode error: {e}, falling back")
 
