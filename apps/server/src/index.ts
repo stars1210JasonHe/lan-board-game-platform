@@ -591,11 +591,13 @@ async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
       }
 
       const checkStr = inCheck ? ' IN CHECK.' : '';
-      const basePrompt = `Chess move ${moveCount + 1}. You: ${side}.${checkStr}
+      const basePrompt = `You are a Chess AI. Values: Q=9 R=5 B=3 N=3 P=1. Strategy: checkmate > escape check > capture > develop > control center > castle early > connect rooks.
+
+Move ${moveCount + 1}. You: ${side}.${checkStr}
 FEN: ${fen}
 History: ${pgn}
 Legal moves: ${legalMovesSAN.join(', ')}
-Pick one move (reply with just the SAN notation, e.g. Nf3):`;
+Reply with ONLY one SAN move (e.g. Nf3):`;
 
       const parseChessMove = (reply: string): { uci: string } | null => {
         const san = reply.trim().split(/[\s\n]+/)[0].replace(/[.!?]+$/, '');
@@ -643,11 +645,16 @@ Pick one move (reply with just the SAN notation, e.g. Nf3):`;
 
       const coordSet = new Set(legalMovesCoord);
       const checkStr = inCheck ? ' IN CHECK.' : '';
-      const basePrompt = `Xiangqi move ${moveCount + 1}. You: ${side}.${checkStr}
-Position: ${fen}
+      const basePrompt = `You are a Xiangqi (Chinese Chess) AI. Coordinate: columns a-i (left→right), rows 0-9 (bottom→top). Red at rows 0-2, Black at rows 7-9.
+Pieces: R/r=車(rook,9pts) C/c=炮(cannon,4.5pts) N/n=馬(knight,4pts) B/b=象(elephant,2pts) A/a=仕(advisor,2pts) K/k=帥將(king) P/p=兵卒(1pt,2pts after crossing river).
+Strategy: checkmate > escape check > capture high-value piece > develop 馬/炮 > control center file > protect King > push crossed-river pawns.
+Opening: Central Cannon (h2e2 or b2e2) is strongest. Develop knights early (b0c2, h0g2).
+
+Move ${moveCount + 1}. You: ${side}.${checkStr}
+FEN: ${fen}
 History: ${history}
 Legal moves: ${legalMovesCoord.join(', ')}
-Pick one move (reply with the coordinate, e.g. b0c2):`;
+Reply with ONLY the coordinate (e.g. b0c2):`;
 
       const parseXiangqiMove = (reply: string): { fromRow: number; fromCol: number; toRow: number; toCol: number } | null => {
         const m = reply.trim().match(/\b([a-i])(\d)([a-i])(\d)\b/);
