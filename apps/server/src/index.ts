@@ -4,7 +4,8 @@ import { readFileSync, existsSync } from 'fs';
 import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
-import { execFile, spawn } from 'child_process';
+import { spawn } from 'child_process';
+import { llmChat, getSkill } from './llm.js';
 import Database from 'better-sqlite3';
 import { GomokuGame, BLACK as GB, WHITE as GW } from './games/gomoku.js';
 import { ChessGame } from './games/chess.js';
@@ -554,22 +555,7 @@ function jsonResponse(res: ServerResponse, status: number, data: any) {
   res.end(JSON.stringify(data));
 }
 
-function callOpenclawAgent(sessionId: string, message: string, timeout: number): Promise<any> {
-  return new Promise((resolve, reject) => {
-    const args = ['agent', '--session-id', sessionId, '--message', message, '--json', '--timeout', String(timeout)];
-    const child = execFile('openclaw', args, { timeout: (timeout + 5) * 1000 }, (err, stdout, stderr) => {
-      if (err) { reject(new Error(stderr?.slice(0, 200) || err.message)); return; }
-      try {
-        const result = JSON.parse(stdout);
-        const payloads = result?.result?.payloads ?? [];
-        const text = payloads[0]?.text ?? '';
-        resolve(text);
-      } catch (e) {
-        reject(new Error('Failed to parse openclaw response'));
-      }
-    });
-  });
-}
+// LLM provider loaded from llm.ts (supports OpenClaw CLI + direct API)
 
 async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
   try {
@@ -591,9 +577,8 @@ async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
       }
 
       const checkStr = inCheck ? ' IN CHECK.' : '';
-      const basePrompt = `You are a Chess AI. Values: Q=9 R=5 B=3 N=3 P=1. Strategy: checkmate > escape check > capture > develop > control center > castle early > connect rooks.
-
-Move ${moveCount + 1}. You: ${side}.${checkStr}
+      const chessSkill = getSkill('chess');
+      const baseUserMsg = `Move ${moveCount + 1}. You: ${side}.${checkStr}
 FEN: ${fen}
 History: ${pgn}
 Legal moves: ${legalMovesSAN.join(', ')}
@@ -617,13 +602,13 @@ Reply with ONLY one SAN move (e.g. Nf3):`;
         return { uci: m!.from + m!.to + (m!.promotion || '') };
       };
 
-      let prompt = basePrompt;
+      let userMsg = baseUserMsg;
       try {
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const reply = await callOpenclawAgent('euler-chess-moves', prompt, 30);
+          const reply = await llmChat('euler-chess-moves', chessSkill, userMsg, 30);
           const move = parseChessMove(reply);
           if (move) { jsonResponse(res, 200, move); return; }
-          prompt = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesSAN.join(', ')}. Reply with just one SAN move:`;
+          userMsg = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesSAN.join(', ')}. Reply with just one SAN move:`;
         }
       } catch (e: any) {
         console.error('Chess AI error:', e.message);
@@ -645,12 +630,8 @@ Reply with ONLY one SAN move (e.g. Nf3):`;
 
       const coordSet = new Set(legalMovesCoord);
       const checkStr = inCheck ? ' IN CHECK.' : '';
-      const basePrompt = `You are a Xiangqi (Chinese Chess) AI. Coordinate: columns a-i (left→right), rows 0-9 (bottom→top). Red at rows 0-2, Black at rows 7-9.
-Pieces: R/r=車(rook,9pts) C/c=炮(cannon,4.5pts) N/n=馬(knight,4pts) B/b=象(elephant,2pts) A/a=仕(advisor,2pts) K/k=帥將(king) P/p=兵卒(1pt,2pts after crossing river).
-Strategy: checkmate > escape check > capture high-value piece > develop 馬/炮 > control center file > protect King > push crossed-river pawns.
-Opening: Central Cannon (h2e2 or b2e2) is strongest. Develop knights early (b0c2, h0g2).
-
-Move ${moveCount + 1}. You: ${side}.${checkStr}
+      const xiangqiSkill = getSkill('xiangqi');
+      const baseUserMsg = `Move ${moveCount + 1}. You: ${side}.${checkStr}
 FEN: ${fen}
 History: ${history}
 Legal moves: ${legalMovesCoord.join(', ')}
@@ -675,13 +656,13 @@ Reply with ONLY the coordinate (e.g. b0c2):`;
         };
       };
 
-      let prompt = basePrompt;
+      let userMsg = baseUserMsg;
       try {
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const reply = await callOpenclawAgent('euler-xiangqi-moves', prompt, 30);
+          const reply = await llmChat('euler-xiangqi-moves', xiangqiSkill, userMsg, 30);
           const move = parseXiangqiMove(reply);
           if (move) { jsonResponse(res, 200, move); return; }
-          prompt = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesCoord.join(', ')}. Reply with just one coordinate (e.g. b0c2):`;
+          userMsg = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesCoord.join(', ')}. Reply with just one coordinate (e.g. b0c2):`;
         }
       } catch (e: any) {
         console.error('Xiangqi AI error:', e.message);
@@ -713,13 +694,13 @@ Pick coordinates (row,col 0-indexed):`;
       return null;
     };
 
-    let prompt = basePrompt;
+    let userMsg = basePrompt;
     try {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const reply = await callOpenclawAgent('euler-gomoku-moves', prompt, 30);
+        const reply = await llmChat('euler-gomoku-moves', '', userMsg, 30);
         const move = parseGomokuMove(reply, board);
         if (move) { jsonResponse(res, 200, move); return; }
-        prompt = `"${reply.trim()}" is not a valid empty cell. Reply with row,col (0-indexed, must be empty):`;
+        userMsg = `"${reply.trim()}" is not a valid empty cell. Reply with row,col (0-indexed, must be empty):`;
       }
     } catch (e: any) {
       console.error('Gomoku AI error:', e.message);
@@ -752,12 +733,12 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
     }
     const safeText = text.slice(0, 500);
 
-    const message = gameContext
-      ? `[Context: ${CHAT_SYSTEM_CONTEXT}] [Game: ${String(gameContext).slice(0, 200)}]\n${safeText}`
-      : `[Context: ${CHAT_SYSTEM_CONTEXT}]\n${safeText}`;
+    const systemMsg = gameContext
+      ? `${CHAT_SYSTEM_CONTEXT}\nGame state: ${String(gameContext).slice(0, 200)}`
+      : CHAT_SYSTEM_CONTEXT;
 
     try {
-      const reply = await callOpenclawAgent('euler-gomoku-game', message, 30);
+      const reply = await llmChat('euler-game-chat', systemMsg, safeText, 30);
       if (!reply || reply.trim() === '' || reply.trim() === 'NO_REPLY' || reply.trim() === 'HEARTBEAT_OK') {
         jsonResponse(res, 200, { reply: null });
         return;
