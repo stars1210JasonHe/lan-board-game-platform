@@ -211,9 +211,12 @@ def engine_xiangqi_move(board_rows, current_player, difficulty='medium'):
 # ── Gomoku AI (minimax with alpha-beta) ──────────────────────────────────────
 
 def gomoku_move(board, size, player):
-    """Minimax-based gomoku AI with alpha-beta pruning (depth 3).
-    Detects open-fours, double-threes, and critical threats."""
+    """Minimax-based gomoku AI with alpha-beta pruning + iterative deepening.
+    Searches depth 5 with 3s time limit. Falls back to best result from shallower search."""
+    import time as _time
     opp = 2 if player == 1 else 1
+    _search_deadline = _time.monotonic() + 3.0  # 3 second time limit
+    _search_timed_out = False
     DIRS = [(0, 1), (1, 0), (1, 1), (1, -1)]
     center = size // 2
 
@@ -336,13 +339,21 @@ def gomoku_move(board, size, player):
         if not cands:
             return 0, None
 
-        # Order candidates by heuristic (top 15)
-        scored = sorted(cands, key=lambda m: -heuristic_score(m[0], m[1]))[:15]
+        nonlocal _search_timed_out
+        if _search_timed_out or _time.monotonic() > _search_deadline:
+            _search_timed_out = True
+            return evaluate(), None
+
+        # Order candidates by heuristic — fewer at deeper levels for speed
+        top_n = 12 if depth >= 4 else 15
+        scored = sorted(cands, key=lambda m: -heuristic_score(m[0], m[1]))[:top_n]
         best_move = scored[0]
 
         if is_max:
             max_eval = -999999
             for r, c in scored:
+                if _search_timed_out:
+                    break
                 board[r][c] = player
                 if check_win(r, c, player):
                     board[r][c] = 0
@@ -362,6 +373,8 @@ def gomoku_move(board, size, player):
         else:
             min_eval = 999999
             for r, c in scored:
+                if _search_timed_out:
+                    break
                 board[r][c] = opp
                 if check_win(r, c, opp):
                     board[r][c] = 0
@@ -398,10 +411,18 @@ def gomoku_move(board, size, player):
             return {"row": r, "col": c}
         board[r][c] = 0
 
-    # Minimax search (depth 3)
-    _, move = minimax(3, -999999, 999999, True)
-    if move:
-        return {"row": move[0], "col": move[1]}
+    # Iterative deepening: search depth 3→4→5, keep best result within time limit
+    best_result = None
+    for d in range(3, 6):
+        _search_timed_out = False
+        _search_deadline = _time.monotonic() + (1.0 if d <= 3 else 3.0)
+        _, move = minimax(d, -999999, 999999, True)
+        if move and not _search_timed_out:
+            best_result = move
+        if _search_timed_out:
+            break  # Time's up, use last complete result
+    if best_result:
+        return {"row": best_result[0], "col": best_result[1]}
     return {"row": center, "col": center}
 
 
