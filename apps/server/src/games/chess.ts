@@ -2,13 +2,26 @@ import { Chess } from 'chess.js';
 
 export class ChessGame {
   private chess: Chess;
+  private positionCounts = new Map<string, number>();
   winner: string | null = null;
   winnerReason: string | null = null;
   finished = false;
   moveHistory: { side: string; uci: string; san: string }[] = [];
   resignedBy: string | null = null;
 
-  constructor() { this.chess = new Chess(); }
+  constructor() {
+    this.chess = new Chess();
+    this.recordPosition();
+  }
+
+  private positionKey(): string { return this.chess.fen().split(' ').slice(0, 4).join(' '); }
+
+  private recordPosition() {
+    const key = this.positionKey();
+    this.positionCounts.set(key, (this.positionCounts.get(key) ?? 0) + 1);
+  }
+
+  repetitionCount(): number { return this.positionCounts.get(this.positionKey()) ?? 1; }
 
   currentSide() { return this.chess.turn() === 'w' ? 'white' : 'black'; }
 
@@ -24,6 +37,7 @@ export class ChessGame {
       const m = this.chess.move({ from, to, promotion });
       if (!m) return { ok: false, reason: 'illegal move' };
       this.moveHistory.push({ side, uci, san: m.san });
+      this.recordPosition();
       return this.checkEnd();
     } catch { return { ok: false, reason: 'invalid move' }; }
   }
@@ -45,8 +59,12 @@ export class ChessGame {
     }
     if (this.chess.isDraw()) {
       this.finished = true;
-      const reason = this.chess.isStalemate() ? 'stalemate' :
-        this.chess.isInsufficientMaterial() ? 'insufficient_material' : 'draw';
+      let reason = 'draw';
+      if (this.chess.isStalemate()) reason = 'stalemate';
+      else if (this.chess.isInsufficientMaterial()) reason = 'insufficient_material';
+      else if (this.chess.isThreefoldRepetition()) reason = 'threefold_repetition';
+      else reason = 'fifty_move_rule';
+      this.winnerReason = reason;
       return { ok: true, draw: true, reason };
     }
     return { ok: true };

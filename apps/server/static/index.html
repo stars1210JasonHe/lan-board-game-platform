@@ -159,6 +159,7 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 <div id="screen-match" class="screen">
   <div class="match-layout">
     <div class="panel board-area">
+      <div id="side-indicator" style="background:#1a1a2e;border:2px solid #e94560;border-radius:8px;padding:6px 16px;margin-bottom:8px;font-weight:700;text-align:center;font-size:0.95rem;display:none"></div>
       <div class="turn-indicator" id="turn-indicator">Waiting...</div>
       <canvas id="board-canvas" width="600" height="600"></canvas>
       <div class="match-controls">
@@ -194,6 +195,37 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 const WS_URL = `ws://${location.host}`;
 let ws = null, clientId = null, myNick = '', myRoom = null, mySide = null;
 let gameType = 'gomoku', gameState = null, selectedFrom = null;
+let chatInitialized = false; // BUG-1: track if chat was loaded from room_state
+let isSpectator = false; // FEAT-6: spectator mode flag
+
+// FEAT-1: Sound effects using Web Audio API
+let audioCtx = null;
+function getAudioCtx() { if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)(); return audioCtx; }
+function playTone(freq, dur, type) {
+  try {
+    const ctx = getAudioCtx(); const osc = ctx.createOscillator(); const g = ctx.createGain();
+    osc.type = type || 'sine'; osc.frequency.value = freq; g.gain.value = 0.12;
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    osc.connect(g); g.connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + dur);
+  } catch(e) {}
+}
+function playMoveSound() { playTone(660, 0.08); }
+function playCaptureSound() { playTone(330, 0.12, 'square'); setTimeout(() => playTone(220, 0.15, 'square'), 60); }
+function detectCapture(prev, cur) {
+  if (!prev || !cur) return false;
+  const gt = cur.gameType;
+  if (gt === 'gomoku') return false;
+  if (gt === 'chess') {
+    if (cur.lastMove && cur.lastMove.includes('x')) return true;
+    const cp = f => (f.split(' ')[0].match(/[a-zA-Z]/g)||[]).length;
+    return prev.fen && cur.fen && cp(prev.fen) > cp(cur.fen);
+  }
+  if (gt === 'xiangqi') {
+    const cp = b => b.reduce((s,r) => s + [...r].filter(c=>c!==' ').length, 0);
+    return prev.board && cur.board && cp(prev.board) > cp(cur.board);
+  }
+  return false;
+}
 
 // ── Nick persistence ──────────────────────────────────────────────────────────
 window.onload = () => {
@@ -219,9 +251,28 @@ function connect() {
 function send(msg) { if (ws?.readyState === 1) ws.send(JSON.stringify(msg)); }
 
 function handleMsg(msg) {
-  if (msg.type === 'identified') { clientId = msg.clientId; }
+  if (msg.type === 'identified') {
+    clientId = msg.clientId;
+    // BUG-5: auto-rejoin after page refresh
+    const savedRoom = sessionStorage.getItem('bgp_roomId');
+    const savedClient = sessionStorage.getItem('bgp_clientId');
+    if (savedRoom && savedClient) {
+      send({ type: 'rejoin_room', roomId: savedRoom, oldClientId: savedClient });
+      sessionStorage.setItem('bgp_clientId', clientId);
+    }
+  }
+  if (msg.type === 'rejoin_failed') {
+    sessionStorage.removeItem('bgp_roomId');
+    sessionStorage.removeItem('bgp_clientId');
+  }
   if (msg.type === 'rooms_list') renderRooms(msg.rooms);
-  if (msg.type === 'room_joined') { myRoom = msg.roomId; showScreen('room'); }
+  if (msg.type === 'room_joined') {
+    myRoom = msg.roomId;
+    if (msg.spectator) isSpectator = true;
+    sessionStorage.setItem('bgp_roomId', msg.roomId);
+    sessionStorage.setItem('bgp_clientId', clientId);
+    showScreen('room');
+  }
   if (msg.type === 'room_state') updateRoomState(msg.room);
   if (msg.type === 'match_start') {
     const sides = msg.sides || {};
@@ -230,15 +281,24 @@ function handleMsg(msg) {
     showScreen('match');
     renderBoard(); updateTurn();
   }
-  if (msg.type === 'move') { gameState = msg.gameState; renderBoard(); updateTurn(); addMove(msg); }
+  if (msg.type === 'move') {
+    const prev = gameState;
+    gameState = msg.gameState;
+    if (detectCapture(prev, gameState)) playCaptureSound(); else playMoveSound();
+    renderBoard(); updateTurn(); addMove(msg);
+  }
+  // FEAT-2: invalid move hints shown as toast
+  if (msg.type === 'move_error') { showError(msg.msg); }
   if (msg.type === 'chat') appendChat(msg.message);
   if (msg.type === 'match_end') showEndModal(msg);
   if (msg.type === 'player_ready') {}
   if (msg.type === 'player_left') {
-    appendChat({ nick:'System', text:`${String(msg.nick)} disconnected. Returning to lobby...`, system:true });
-    showError(`${String(msg.nick)} disconnected — returning to lobby...`);
-    document.getElementById('end-modal').classList.add('hidden');
-    setTimeout(() => { leaveRoom(); }, 3000);
+    appendChat({ nick:'System', text:`${String(msg.nick)} disconnected.`, system:true });
+    // BUG-4 fix: don't auto-kick if match just ended (let player see result)
+    const endModalVisible = !document.getElementById('end-modal').classList.contains('hidden');
+    if (!endModalVisible && !gameState?.finished) {
+      showError(`${String(msg.nick)} disconnected — game forfeited.`);
+    }
   }
   if (msg.type === 'error') { console.warn('Server error:', msg.msg); showError(msg.msg); }
 }
@@ -254,14 +314,28 @@ function showScreen(name) {
 function renderRooms(rooms) {
   const el = document.getElementById('rooms-container');
   if (!rooms.length) { el.innerHTML = '<p style="color:#aaa;text-align:center">No rooms yet. Create one!</p>'; return; }
-  el.innerHTML = rooms.map(r => `
-    <div class="room-card" onclick="joinRoom('${escHtml(r.id)}')">
+  el.innerHTML = rooms.map(r => {
+    const canJoin = r.state === 'waiting' && r.playerCount < 2;
+    const canSpectate = r.state === 'playing';
+    return `
+    <div class="room-card"${canJoin ? ` onclick="joinRoom('${escHtml(r.id)}')"` : ''}>
       <h3>${escHtml(r.gameType.toUpperCase())}</h3>
       <div class="meta">Room: ${escHtml(r.id)} · ${r.playerCount}/2 players</div>
       <div>${r.players.map(p=>`<span style="margin-right:8px">👤 ${escHtml(p.nick)}${p.isAi?' 🤖':''}</span>`).join('')}</div>
-      <div style="margin-top:8px"><span class="badge badge-${escHtml(r.state)}">${escHtml(r.state)}</span></div>
-    </div>
-  `).join('');
+      <div style="margin-top:8px">
+        <span class="badge badge-${escHtml(r.state)}">${escHtml(r.state)}</span>
+        ${canSpectate ? `<button class="btn btn-secondary btn-small" style="margin-left:8px" onclick="event.stopPropagation();spectateRoom('${escHtml(r.id)}')">Spectate</button>` : ''}
+        ${canJoin ? `<button class="btn btn-success btn-small" style="margin-left:8px" onclick="event.stopPropagation();joinRoom('${escHtml(r.id)}')">Join</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function spectateRoom(roomId) {
+  myNick = getNick();
+  ws.send(JSON.stringify({ type: 'identify', nick: myNick }));
+  isSpectator = true;
+  send({ type: 'spectate_room', roomId });
 }
 
 function showEngineOptions() {
@@ -299,9 +373,14 @@ function joinRoom(roomId) {
 
 function leaveRoom() {
   send({ type: 'leave_room' });
-  myRoom = null; mySide = null; gameState = null;
+  myRoom = null; mySide = null; gameState = null; chatInitialized = false; isSpectator = false;
+  sessionStorage.removeItem('bgp_roomId');
+  sessionStorage.removeItem('bgp_clientId');
   showScreen('lobby');
   document.getElementById('end-modal').classList.add('hidden');
+  // Clear chat panels
+  document.getElementById('chat-room').innerHTML = '';
+  document.getElementById('chat-match').innerHTML = '';
 }
 
 // ── Room ──────────────────────────────────────────────────────────────────────
@@ -361,10 +440,13 @@ function updateRoomState(room) {
     else statusEl.textContent = '🚀 All ready! Starting...';
   }
 
-  // Replay chat
-  const chatEl = document.getElementById('chat-room');
-  chatEl.innerHTML = '';
-  (room.chat ?? []).forEach(m => appendChat(m, 'room'));
+  // BUG-1 fix: only load chat from room_state on initial join, then rely on incremental 'chat' events
+  if (!chatInitialized) {
+    const chatEl = document.getElementById('chat-room');
+    chatEl.innerHTML = '';
+    (room.chat ?? []).forEach(m => appendChat(m, 'room'));
+    chatInitialized = true;
+  }
 
   // Feature #1: Match history
   renderMatchHistory(room.matchHistory ?? []);
@@ -458,6 +540,18 @@ function updateTurn() {
   const myTurn = isMyTurnNow();
   el.textContent = myTurn ? `Your turn (${mySide})` : `${gameState.currentPlayerName ?? gameState.currentPlayer}'s turn`;
   el.style.background = myTurn ? '#27ae60' : '#0f3460';
+  // BUG-2 fix: persistent side indicator
+  const sideEl = document.getElementById('side-indicator');
+  if (mySide && !isSpectator) {
+    const icons = { white: '\u2654', black: '\u265A', red: '\u2654', first: '\u25CF', second: '\u25CB' };
+    sideEl.textContent = `You are: ${icons[mySide] || ''} ${mySide.toUpperCase()}`;
+    sideEl.style.display = 'block';
+    sideEl.style.color = mySide === 'red' || mySide === 'white' ? '#f5f5f5' : mySide === 'black' ? '#aaa' : '#eee';
+  } else if (isSpectator) {
+    sideEl.textContent = 'Spectating';
+    sideEl.style.display = 'block';
+    sideEl.style.color = '#f39c12';
+  }
 }
 
 function addMove(msg) {
@@ -478,18 +572,28 @@ function playAgain() {
 function showEndModal(msg) {
   // Determine win/lose/draw from the perspective of this player
   let title, desc;
+  const reasonLabels = {
+    checkmate: 'Checkmate', stalemate: 'Stalemate', resignation: 'Resignation',
+    disconnect: 'Disconnection', timeout: 'Time out',
+    threefold_repetition: 'Threefold repetition', fifty_move_rule: '50-move rule',
+    insufficient_material: 'Insufficient material', draw: 'Draw'
+  };
+  const reasonStr = msg.reason ? (reasonLabels[msg.reason] || msg.reason) : '';
   if (msg.draw) {
     title = 'Draw!';
-    desc = msg.result || 'The game ended in a draw.';
+    desc = reasonStr ? `Draw by ${reasonStr.toLowerCase()}` : (msg.result || 'The game ended in a draw.');
   } else if (!msg.winner) {
     title = 'Game Over';
     desc = msg.result || '';
   } else if (msg.winner === mySide) {
     title = 'You Win!';
-    desc = msg.result || `You won as ${mySide}!`;
+    desc = reasonStr ? `Victory by ${reasonStr.toLowerCase()}!` : (msg.result || `You won as ${mySide}!`);
+  } else if (isSpectator) {
+    title = 'Game Over';
+    desc = msg.result || `${msg.winner} wins.`;
   } else {
     title = 'You Lose';
-    desc = msg.result || `${msg.winner} wins.`;
+    desc = reasonStr ? `Defeat by ${reasonStr.toLowerCase()}` : (msg.result || `${msg.winner} wins.`);
   }
   document.getElementById('end-title').textContent = title;
   document.getElementById('end-desc').textContent = desc;
@@ -674,6 +778,7 @@ function onXiangqiClick(x,y) {
 
 function onBoardClick(e) {
   if(!gameState||gameState.finished) return;
+  if(isSpectator) return;
   if(!isMyTurnNow()) return;
   const rect=canvas.getBoundingClientRect();
   const x=e.clientX-rect.left, y=e.clientY-rect.top;

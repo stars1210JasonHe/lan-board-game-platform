@@ -150,10 +150,61 @@ async function startMatch(room: any) {
   await broadcast(room, { type: 'match_start', sides, gameState: room.game.stateDict() });
   await broadcast(room, { type: 'chat', message: sysMsg });
   await sendRoomState(room);
+  await startTurnTimer(room);
   await maybeAiMove(room);
 }
 
 let aiTimers: Map<string, NodeJS.Timeout> = new Map();
+let turnTimers: Map<string, NodeJS.Timeout> = new Map();
+let turnWarningTimers: Map<string, NodeJS.Timeout> = new Map();
+
+// FEAT-5: Move timeout mechanism
+const TIMEOUT_AI_MS = 30_000;       // AI: 30s → auto-resign
+const TIMEOUT_HUMAN_WARN_MS = 180_000; // Human: 3min → warning
+const TIMEOUT_HUMAN_FORFEIT_MS = 300_000; // Human: 5min → forfeit
+
+function clearTurnTimer(roomId: string) {
+  const t = turnTimers.get(roomId); if (t) clearTimeout(t); turnTimers.delete(roomId);
+  const w = turnWarningTimers.get(roomId); if (w) clearTimeout(w); turnWarningTimers.delete(roomId);
+}
+
+async function startTurnTimer(room: any) {
+  clearTurnTimer(room.id);
+  if (room.state !== 'playing' || !room.game || room.game.finished) return;
+  const gs = room.game.stateDict();
+  const curSide = gs.currentPlayer;
+  const curSideName = gs.currentPlayerName ?? curSide;
+  const curEntry = Object.entries<any>(room.players).find(([, p]) => p.side === curSide || p.side === curSideName);
+  if (!curEntry) return;
+  const [curId, curPlayer] = curEntry;
+  const isAi = curPlayer.isAi || curId.startsWith('AI_');
+
+  if (isAi) {
+    // AI gets 30s
+    turnTimers.set(room.id, setTimeout(async () => {
+      if (room.state !== 'playing' || room.game?.finished) return;
+      const sysMsg = addChat(room, 'System', `${curPlayer.nick} timed out — auto-forfeit.`, true);
+      await broadcast(room, { type: 'chat', message: sysMsg });
+      const result = room.game.resign?.(curSide) ?? { ok: true, winner: null, reason: 'timeout' };
+      await handleMatchEnd(room, { ...result, reason: 'timeout' });
+    }, TIMEOUT_AI_MS));
+  } else {
+    // Human: warn at 3min, forfeit at 5min
+    turnWarningTimers.set(room.id, setTimeout(async () => {
+      if (room.state !== 'playing' || room.game?.finished) return;
+      const sysMsg = addChat(room, 'System', `⏰ ${curPlayer.nick}, 2 minutes remaining to make a move!`, true);
+      await broadcast(room, { type: 'chat', message: sysMsg });
+      await sendClient(curId, { type: 'turn_warning', remaining: TIMEOUT_HUMAN_FORFEIT_MS - TIMEOUT_HUMAN_WARN_MS });
+    }, TIMEOUT_HUMAN_WARN_MS));
+    turnTimers.set(room.id, setTimeout(async () => {
+      if (room.state !== 'playing' || room.game?.finished) return;
+      const sysMsg = addChat(room, 'System', `${curPlayer.nick} timed out — auto-forfeit.`, true);
+      await broadcast(room, { type: 'chat', message: sysMsg });
+      const result = room.game.resign?.(curSide) ?? { ok: true, winner: null, reason: 'timeout' };
+      await handleMatchEnd(room, { ...result, reason: 'timeout' });
+    }, TIMEOUT_HUMAN_FORFEIT_MS));
+  }
+}
 
 async function maybeAiMove(room: any) {
   if (room.state !== 'playing' || !room.game || room.game.finished) return;
@@ -186,8 +237,8 @@ async function maybeAiMove(room: any) {
       room.moves.push({ side: curSide, move, ts: Date.now() });
       const gs2 = room.game.stateDict();
       await broadcast(room, { type: 'move', side: curSide, move, gameState: gs2 });
-      if (room.game.finished) await handleMatchEnd(room, result);
-      else await maybeAiMove(room);
+      if (room.game.finished) { clearTurnTimer(room.id); await handleMatchEnd(room, result); }
+      else { await startTurnTimer(room); await maybeAiMove(room); }
     } catch (e) { console.error('AI error:', e); }
   }, delay);
   aiTimers.set(room.id, timer);
@@ -366,6 +417,7 @@ async function fetchEngineMove(gameType: string, game: any, difficulty: string):
 }
 
 async function handleMatchEnd(room: any, result: any) {
+  clearTurnTimer(room.id);
   room.state = 'finished';
   const game = room.game;
   const endedAt = new Date().toISOString();
@@ -429,6 +481,7 @@ async function handleLeave(clientId: string, nick: string) {
   const humans = Object.keys(room.players).filter(id => !id.startsWith('AI_'));
   if (humans.length === 0) {
     const t = aiTimers.get(roomId); if (t) clearTimeout(t); aiTimers.delete(roomId);
+    clearTurnTimer(roomId);
     // Grace period: keep room alive 60s in case player refreshes
     setTimeout(() => {
       const r2 = rooms.get(roomId);
@@ -840,6 +893,44 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // BUG-5: Reconnection after page refresh
+    if (type === 'rejoin_room') {
+      const room = rooms.get(msg.roomId);
+      const oldId = msg.oldClientId;
+      if (!room) { ws.send(JSON.stringify({ type: 'error', msg: 'room not found' })); return; }
+      // Check if the old player entry still exists
+      if (oldId && room.players[oldId]) {
+        // Transfer player entry from old clientId to new clientId
+        const playerData = room.players[oldId];
+        delete room.players[oldId];
+        room.players[clientId] = playerData;
+        // Update mappings
+        clientRoom.delete(oldId);
+        clients.delete(oldId);
+        clientRoom.set(clientId, room.id);
+        nick = playerData.nick;
+        ws.send(JSON.stringify({ type: 'room_joined', roomId: room.id, rejoin: true }));
+        const sysMsg = addChat(room, 'System', `${nick} reconnected.`, true);
+        await broadcast(room, { type: 'chat', message: sysMsg });
+        await sendRoomState(room, clientId);
+      } else {
+        // Old player gone — try joining as new player if room allows
+        const humanCount = Object.values<any>(room.players).filter((p:any) => !p.isAi).length;
+        if (humanCount < 2 && room.state === 'waiting') {
+          const joinNick = getUniqueNick(room, nick);
+          if (joinNick !== nick) nick = joinNick;
+          room.players[clientId] = { nick: joinNick, ready: false, isAi: false, side: null };
+          clientRoom.set(clientId, room.id);
+          ws.send(JSON.stringify({ type: 'room_joined', roomId: room.id }));
+          await sendRoomState(room, clientId);
+        } else {
+          ws.send(JSON.stringify({ type: 'rejoin_failed', reason: 'session expired' }));
+        }
+      }
+      broadcastRoomsUpdate();
+      return;
+    }
+
     if (type === 'spectate_room') {
       const room = rooms.get(msg.roomId);
       if (!room) { ws.send(JSON.stringify({ type: 'error', msg: 'room not found' })); return; }
@@ -877,11 +968,29 @@ wss.on('connection', (ws) => {
       const curName = gs.currentPlayerName ?? gs.currentPlayer;
       if (player.side !== gs.currentPlayer && player.side !== curName) { ws.send(JSON.stringify({ type: 'error', msg: 'not your turn' })); return; }
       const result = room.game.applyMove(msg.move);
-      if (!result.ok) { ws.send(JSON.stringify({ type: 'error', msg: result.reason })); return; }
+      if (!result.ok) {
+        // FEAT-2: add context-specific hints for invalid moves
+        let hint = result.reason || 'illegal move';
+        if (room.gameType === 'chess') {
+          const gs2 = room.game.stateDict();
+          if (gs2.inCheck) hint += ' — your king is in check, you must resolve it';
+        } else if (room.gameType === 'xiangqi') {
+          const gs2 = room.game.stateDict();
+          if (gs2.inCheck) hint += ' — your general is in check, you must resolve it';
+        }
+        ws.send(JSON.stringify({ type: 'move_error', msg: hint }));
+        return;
+      }
       room.moves.push({ side: player.side, move: msg.move, ts: Date.now() });
       await broadcast(room, { type: 'move', side: player.side, move: msg.move, gameState: room.game.stateDict() });
-      if (room.game.finished) await handleMatchEnd(room, result);
-      else await maybeAiMove(room);
+      // FEAT-4: repetition warning for chess
+      if (room.gameType === 'chess' && !room.game.finished && room.game.repetitionCount() >= 2) {
+        const warnMsg = addChat(room, 'System', 'Position repeated — one more repetition will be a draw (threefold repetition).', true);
+        await broadcast(room, { type: 'chat', message: warnMsg });
+        await broadcast(room, { type: 'repetition_warning', count: room.game.repetitionCount() });
+      }
+      if (room.game.finished) { clearTurnTimer(room.id); await handleMatchEnd(room, result); }
+      else { await startTurnTimer(room); await maybeAiMove(room); }
       return;
     }
 

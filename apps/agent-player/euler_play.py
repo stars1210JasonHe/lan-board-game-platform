@@ -789,6 +789,8 @@ async def main():
         opponent_nick = "opponent"
         last_move_count = -1  # track moveCount we last acted on to prevent duplicate moves
         illegal_retries = 0   # retry counter for rejected moves
+        # FEAT-3: position loop detection
+        position_history = {}  # fen/board-hash -> count
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
@@ -929,10 +931,10 @@ async def main():
             msg = json.loads(raw)
             t = msg.get("type")
 
-            if t == "error":
+            if t in ("error", "move_error"):
                 err_msg = msg.get('msg', '')
                 print(f"⚠️  Server error: {err_msg}")
-                if err_msg == 'illegal move' and game_state and is_my_turn(game_state):
+                if ('illegal move' in err_msg or t == 'move_error') and game_state and is_my_turn(game_state):
                     illegal_retries += 1
                     if illegal_retries <= MAX_ILLEGAL_RETRIES:
                         print(f"🔄 Retry {illegal_retries}/{MAX_ILLEGAL_RETRIES} — picking different move...")
@@ -940,8 +942,30 @@ async def main():
                         await asyncio.sleep(random.uniform(0.3, 0.8))
                         await try_move(game_state)
                     else:
-                        print(f"⚠️ {MAX_ILLEGAL_RETRIES} retries exhausted, skipping turn")
+                        print(f"⚠️ {MAX_ILLEGAL_RETRIES} retries exhausted, falling back to local move generator")
                         illegal_retries = 0
+                        # BUG-3 fix: fallback to local move generator instead of silently giving up
+                        if game_state:
+                            gt = game_state.get('gameType', '')
+                            local_move = None
+                            try:
+                                if gt == 'xiangqi':
+                                    local_move = xiangqi_move(game_state.get('board', []), game_state.get('currentPlayer', 'red'))
+                                elif gt == 'chess':
+                                    legal = game_state.get('legalMoves', [])
+                                    if legal:
+                                        local_move = chess_move(legal)
+                                elif gt == 'gomoku':
+                                    board = [row[:] for row in game_state.get('board', [])]
+                                    local_move = gomoku_move(board, game_state.get('size', 15), game_state.get('currentPlayer', 1))
+                            except Exception as e:
+                                print(f"⚠️ Local move generator error: {e}")
+                            if local_move:
+                                print(f"🔄 Local fallback move: {local_move}")
+                                await send_ws({"type": "move", "move": local_move})
+                            else:
+                                print("🏳️ No local moves available — resigning")
+                                await send_ws({"type": "resign"})
                 continue
 
             if t == "room_joined":
@@ -999,6 +1023,14 @@ async def main():
             elif t == "move":
                 illegal_retries = 0  # reset on any successful move (ours or opponent's)
                 game_state = msg.get("gameState", game_state)
+                # FEAT-3: track positions for loop detection
+                if game_state:
+                    pos_key = game_state.get('fen', '') or str(game_state.get('board', ''))
+                    position_history[pos_key] = position_history.get(pos_key, 0) + 1
+                    if position_history[pos_key] >= 3 and is_my_turn(game_state):
+                        print(f"🔄 Position repeated {position_history[pos_key]}x — resigning to avoid loop")
+                        await send_ws({"type": "resign"})
+                        continue
                 if game_state and not game_state.get("finished"):
                     if is_my_turn(game_state):
                         await asyncio.sleep(random.uniform(0.8, 2.0))
