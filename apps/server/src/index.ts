@@ -65,7 +65,7 @@ function roomSummary(room: any) {
 }
 
 function addChat(room: any, nick: string, text: string, system = false) {
-  const msg = { nick, text, system, ts: new Date().toISOString() };
+  const msg: any = { nick, text, system, ts: new Date().toISOString() };
   room.chat.push(msg);
   if (room.chat.length > 500) room.chat = room.chat.slice(-200);
   return msg;
@@ -470,12 +470,39 @@ async function handleLeave(clientId: string, nick: string) {
   const room = rooms.get(roomId);
   if (!room) return;
 
-  if (room.state === 'playing' && room.players[clientId]) {
-    const side = room.players[clientId].side;
-    const result = room.game?.resign?.(side) ?? { ok: true, winner: null, reason: 'disconnect' };
-    await handleMatchEnd(room, { ...result, reason: 'disconnect' });
+  // If game is in progress, give a grace period for reconnection (page refresh)
+  if (room.state === 'playing' && room.players[clientId] && !room.players[clientId].isAi) {
+    room.players[clientId]._disconnectedAt = Date.now();
+    room.players[clientId]._disconnectedClientId = clientId;
+    const disconnectNick = room.players[clientId].nick;
+    const sysMsg = addChat(room, 'System', `${disconnectNick} disconnected. Waiting 15s for reconnect...`, true);
+    await broadcast(room, { type: 'chat', message: sysMsg });
+    // Grace period: wait 15s before forfeiting
+    setTimeout(async () => {
+      const r = rooms.get(roomId);
+      if (!r || !r.players[clientId]) return; // already rejoined with new id or room gone
+      if (r.players[clientId]._disconnectedAt) {
+        // Still disconnected after grace period — forfeit
+        const side = r.players[clientId].side;
+        delete r.players[clientId];
+        r.spectators = r.spectators?.filter((s: string) => s !== clientId) ?? [];
+        if (r.state === 'playing' && r.game && !r.game.finished) {
+          const result = r.game.resign?.(side) ?? { ok: true, winner: null, reason: 'disconnect' };
+          await handleMatchEnd(r, { ...result, reason: 'disconnect' });
+        }
+        const msg2 = addChat(r, 'System', `${disconnectNick} did not reconnect — forfeited.`, true);
+        await broadcast(r, { type: 'chat', message: msg2 });
+        await broadcast(r, { type: 'player_left', nick: disconnectNick });
+        broadcastRoomsUpdate();
+      }
+    }, 15_000);
+    return; // Don't delete player yet — wait for reconnect
   }
-  delete room.players[clientId];
+  if (room.players[clientId]?.isAi || !room.players[clientId]) {
+    // AI or already gone
+  } else {
+    delete room.players[clientId];
+  }
   room.spectators = room.spectators?.filter((s: string) => s !== clientId) ?? [];
 
   const humans = Object.keys(room.players).filter(id => !id.startsWith('AI_'));
@@ -902,6 +929,8 @@ wss.on('connection', (ws) => {
       if (oldId && room.players[oldId]) {
         // Transfer player entry from old clientId to new clientId
         const playerData = room.players[oldId];
+        delete playerData._disconnectedAt; // Clear disconnect flag
+        delete playerData._disconnectedClientId;
         delete room.players[oldId];
         room.players[clientId] = playerData;
         // Update mappings
@@ -1011,7 +1040,10 @@ wss.on('connection', (ws) => {
       if (!room) return;
       const text = String(msg.text ?? '').slice(0, 300).trim();
       if (!text) return;
-      const chatMsg = addChat(room, nick, text);
+      const isSpectator = room.spectators?.includes(clientId) ?? false;
+      const displayNick = isSpectator ? `[Spectator] ${nick}` : nick;
+      const chatMsg = addChat(room, displayNick, text);
+      if (isSpectator) chatMsg.spectator = true;
       await broadcast(room, { type: 'chat', message: chatMsg });
       return;
     }

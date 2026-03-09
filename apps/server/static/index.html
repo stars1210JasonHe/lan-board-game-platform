@@ -492,8 +492,10 @@ function appendChat(msg, scope) {
     const el = document.getElementById(id);
     if (!el) return;
     const div = document.createElement('div');
-    div.className = `chat-msg${msg.system?' system':''}${msg.isAi?' ai':''}`;
-    div.innerHTML = `<span class="sender" style="color:${msg.system?'#f39c12':msg.isAi?'#9b59b6':'#7ec8e3'}">${escHtml(msg.nick)}:</span> ${escHtml(msg.text)}`;
+    const isSpec = msg.spectator || msg.nick?.startsWith('[Spectator]');
+    div.className = `chat-msg${msg.system?' system':''}${msg.isAi?' ai':''}${isSpec?' spectator':''}`;
+    const senderColor = msg.system ? '#f39c12' : msg.isAi ? '#9b59b6' : isSpec ? '#95a5a6' : '#7ec8e3';
+    div.innerHTML = `<span class="sender" style="color:${senderColor}">${escHtml(msg.nick)}:</span> ${escHtml(msg.text)}`;
     el.appendChild(div);
     el.scrollTop = el.scrollHeight;
   });
