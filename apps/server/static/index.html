@@ -9,7 +9,7 @@
 <meta http-equiv="Expires" content="0"/>
 <script>
 // Force reload if version mismatch (cache buster)
-const APP_VERSION = '20260304-0100';
+const APP_VERSION = '20260309-0100';
 const cached = localStorage.getItem('app_version');
 if (cached && cached !== APP_VERSION) { localStorage.setItem('app_version', APP_VERSION); location.reload(true); }
 localStorage.setItem('app_version', APP_VERSION);
@@ -89,6 +89,74 @@ canvas{border-radius:8px;cursor:pointer;box-shadow:0 4px 20px rgba(0,0,0,0.4)}
 .result-win{color:#27ae60;font-weight:700}
 .result-loss{color:#e94560}
 .result-draw{color:#f39c12}
+/* ── Responsive design ─────────────────────────────────────────────────────── */
+/* Canvas: scale down on small screens, keep internal resolution */
+canvas{max-width:100%;height:auto;touch-action:manipulation}
+/* Touch-friendly: minimum tap target size */
+.btn{min-height:44px}
+.chat-input input{min-height:44px}
+.chat-input button{min-height:44px}
+
+/* ── Mobile: ≤768px ────────────────────────────────────────────────────────── */
+@media(max-width:768px){
+  .app{padding:8px}
+  h1{font-size:1.3rem;margin-bottom:12px}
+  /* Lobby form: wrap to rows */
+  .lobby-form{flex-wrap:wrap;gap:6px;padding:0 4px}
+  .lobby-form input{width:100%;min-width:0}
+  .lobby-form select{flex:1;min-width:0}
+  .lobby-form .btn{flex:1;min-width:calc(50% - 4px)}
+  /* Room cards: single column */
+  .rooms-grid{grid-template-columns:1fr;gap:10px}
+  /* Room/match layout: stack vertically */
+  .room-layout{grid-template-columns:1fr;gap:12px}
+  .match-layout{grid-template-columns:1fr;gap:12px}
+  /* Chat panel: shorter but usable */
+  .chat-panel{height:220px}
+  .chat-messages{font-size:0.82rem;padding:8px}
+  /* Board area */
+  .board-area{padding:8px}
+  .board-container{width:100%}
+  .turn-indicator{padding:8px 12px;font-size:0.9rem;margin-bottom:8px}
+  /* Buttons: bigger tap targets */
+  .btn{padding:12px 20px;font-size:1rem}
+  .btn-small{padding:10px 16px;font-size:0.9rem}
+  .btn-ready-pulse{font-size:1.1rem!important;padding:14px 24px!important}
+  /* Modal */
+  .modal-box{min-width:unset;width:90%;max-width:360px;padding:24px 16px}
+  .modal-box h2{font-size:1.5rem}
+  .modal-box .btns{flex-direction:column;gap:8px}
+  .modal-box .btns .btn{width:100%}
+  /* Players list */
+  .players-list{gap:8px}
+  .player-slot{padding:8px;min-height:56px}
+  .player-slot .nick{font-size:1rem}
+  /* Move history */
+  .move-history{max-height:100px;font-size:0.75rem}
+  /* History table */
+  .history-table{font-size:0.68rem}
+  .history-table th,.history-table td{padding:3px 4px}
+  /* Panel padding */
+  .panel{padding:10px}
+  /* Side indicator */
+  #side-indicator{font-size:0.85rem;padding:4px 10px;margin-bottom:4px}
+}
+
+/* ── Small phones: ≤400px ──────────────────────────────────────────────────── */
+@media(max-width:400px){
+  h1{font-size:1.1rem;margin-bottom:8px}
+  .lobby-form .btn{min-width:100%}
+  .chat-panel{height:180px}
+  .btn-ready-pulse{font-size:1rem!important;padding:12px 16px!important}
+  .modal-box{padding:16px 12px}
+}
+
+/* ── Tablet: 769px–1024px ──────────────────────────────────────────────────── */
+@media(min-width:769px) and (max-width:1024px){
+  .room-layout{grid-template-columns:1fr 260px}
+  .match-layout{grid-template-columns:1fr 260px}
+  .chat-panel{height:350px}
+}
 </style>
 </head>
 <body>
