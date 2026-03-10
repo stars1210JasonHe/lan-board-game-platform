@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-euler_play.py — Euler's board game client (AI-powered via game server API)
+euler_play.py — OpenClaw's board game client (AI-powered via game server API)
 
 Architecture:
   - Two AI modes: "euler" (LLM via /api/move) and "engine" (Stockfish/Fairy-Stockfish)
@@ -19,7 +19,7 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 import websockets
 
-EULER_NICK = "Euler 🤖"
+EULER_NICK = "OpenClaw 🤖"
 ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                              "..", "..", "..", "skills", "game-player", "ask_move.py")
 
@@ -738,7 +738,7 @@ async def main():
 
     # Fallback canned replies (used when --no-ai-chat or API fails)
     CANNED = {
-        "join": ["Hey! Ready to play 😄", "Let's have a good game!", "Hi! Euler here 🎮"],
+        "join": ["Hey! Ready to play 😄", "Let's have a good game!", "Hi! OpenClaw here 🎮"],
         "win": ["GG! Well played 🎉", "That was fun! Rematch? 😄"],
         "lose": ["GG! You got me 👏", "Well played! Rematch? 🙂"],
         "draw": ["Good game, draw! 🤝", "Evenly matched!"],
@@ -1084,9 +1084,9 @@ async def main():
                         continue
                     elif stripped == '/euler':
                         mode = 'euler'
-                        print("🤖 Switched to Euler AI mode")
+                        print("🤖 Switched to OpenClaw AI mode")
                         await send_ws({"type": "chat",
-                                       "text": "🤖 Switched to Euler AI mode"})
+                                       "text": "🤖 Switched to OpenClaw AI mode"})
                         continue
 
                     ctx = board_summary(game_state) if game_state else ""

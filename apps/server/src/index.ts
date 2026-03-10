@@ -232,7 +232,7 @@ async function maybeAiMove(room: any) {
         return;
       }
       const move = await fetchAiMove(gt, room.game, curSide, room);
-      if (!move) return;
+      if (!move || !room.game || room.game.finished || room.state !== 'playing') return;
       const result = room.game.applyMove(move);
       if (!result.ok) return;
       room.moves.push({ side: curSide, move, ts: Date.now() });
@@ -720,7 +720,7 @@ Pick coordinates (row,col 0-indexed):`;
   }
 }
 
-const CHAT_SYSTEM_CONTEXT = 'You are Euler, playing a board game. Keep replies SHORT (1-2 sentences), playful, competitive. Use emojis sparingly.';
+const CHAT_SYSTEM_CONTEXT = 'You are OpenClaw, playing a board game. Keep replies SHORT (1-2 sentences), playful, competitive. Use emojis sparingly.';
 
 async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
   try {
@@ -871,7 +871,7 @@ wss.on('connection', (ws) => {
         if (room.aiType === 'euler') {
           // Spawn euler_play.py as external agent (joins as real player)
           room.players[clientId].ready = true;
-          const sysMsg = addChat(room, 'System', 'Spawning Euler AI agent...', true);
+          const sysMsg = addChat(room, 'System', 'Spawning OpenClaw AI agent...', true);
           await broadcast(room, { type: 'chat', message: sysMsg });
           await sendRoomState(room, clientId);
           spawnEulerAgent(room.id, room.difficulty);

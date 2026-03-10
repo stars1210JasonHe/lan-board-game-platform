@@ -57,6 +57,8 @@ h1{text-align:center;color:#e94560;margin-bottom:24px;font-size:2rem}
 .chat-msg .sender{font-weight:700;margin-right:4px}
 .chat-msg.system .sender{color:#f39c12}
 .chat-msg.ai .sender{color:#9b59b6}
+.chat-msg.spectator{opacity:0.75;font-style:italic}
+.chat-msg.spectator .sender{color:#95a5a6!important}
 .chat-input{display:flex;gap:6px}
 .chat-input input{flex:1;padding:8px 12px;border-radius:6px;border:1px solid #333;background:#16213e;color:#eee}
 /* Match */
@@ -178,7 +180,7 @@ canvas{max-width:100%;height:auto;touch-action:manipulation}
       <option value="second">Second (后手)</option>
     </select>
     <button class="btn btn-success" onclick="createRoom(false)">Create Room</button>
-    <button class="btn btn-primary" onclick="createRoomAi('euler')">vs LLM AI 🤖</button>
+    <button class="btn btn-primary" onclick="createRoomAi('euler')">vs OpenClaw AI 🤖</button>
     <button class="btn btn-secondary" onclick="showEngineOptions()">vs Engine ⚙️</button>
     <select id="difficulty-select" style="display:none;padding:6px 12px;border-radius:8px;border:1px solid #333;background:#16213e;color:#eee;font-size:0.9rem">
       <option value="beginner">Beginner</option>
