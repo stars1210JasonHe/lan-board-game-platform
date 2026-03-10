@@ -148,7 +148,14 @@ async function startMatch(room: any) {
   const sides = Object.fromEntries(Object.entries<any>(room.players).map(([id,p]) => [id, p.side]));
   const sysMsg = addChat(room, 'System', `Match started! ${Object.values<any>(room.players).map((p:any) => `${p.nick}=${p.side}`).join(', ')}`, true);
 
-  await broadcast(room, { type: 'match_start', sides, gameState: room.game.stateDict() });
+  const gameState = room.game.stateDict();
+  for (const [pid, p] of Object.entries<any>(room.players)) {
+    if (p.isAi) continue;
+    await sendClient(pid, { type: 'match_start', sides, yourSide: p.side, gameState });
+  }
+  for (const sid of room.spectators ?? []) {
+    await sendClient(sid, { type: 'match_start', sides, gameState });
+  }
   await broadcast(room, { type: 'chat', message: sysMsg });
   await sendRoomState(room);
   await startTurnTimer(room);
@@ -902,7 +909,7 @@ wss.on('connection', (ws) => {
       clientRoom.set(clientId, room.id);
       const joinMsg = addChat(room, 'System', `${joinNick} joined.`, true);
       ws.send(JSON.stringify({ type: 'room_joined', roomId: room.id }));
-      await broadcast(room, { type: 'chat', message: joinMsg });
+      await broadcast(room, { type: 'chat', message: joinMsg }, clientId);
       await sendRoomState(room);
       broadcastRoomsUpdate();
       return;
@@ -985,7 +992,10 @@ wss.on('connection', (ws) => {
       const curName = gs.currentPlayerName ?? gs.currentPlayer;
       if (player.side !== gs.currentPlayer && player.side !== curName) { ws.send(JSON.stringify({ type: 'error', msg: 'not your turn' })); return; }
       if (!msg.move) { ws.send(JSON.stringify({ type: 'error', msg: 'move field required' })); return; }
-      const result = room.game.applyMove(msg.move);
+      // Normalize chess moves: accept string UCI (e.g. "e2e4") as well as { uci: "e2e4" }
+      let move = msg.move;
+      if (room.gameType === 'chess' && typeof move === 'string') move = { uci: move };
+      const result = room.game.applyMove(move);
       if (!result.ok) {
         // FEAT-2: add context-specific hints for invalid moves
         let hint = result.reason || 'illegal move';
