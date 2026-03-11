@@ -264,6 +264,33 @@ lan-board-game-platform/
 
 ---
 
+### Self-hosting without OpenClaw
+
+By default, the vs-AI mode uses [OpenClaw](https://openclaw.ai) as the AI backend.
+If you are self-hosting without OpenClaw, you can use any OpenAI-compatible API instead.
+
+1. Copy the example env file:
+   ```bash
+   cp apps/server/.env.example apps/server/.env
+   ```
+2. Edit `apps/server/.env` and fill in your API key:
+   ```
+   AI_ENGINE=openrouter        # or: anthropic, ollama
+   AI_MODEL=openai/gpt-4o-mini # any model supported by your engine
+   AI_API_KEY=sk-or-v1-...     # your API key
+   ```
+3. Restart the server. The AI opponent will now use your configured API.
+
+**Supported engines:**
+| Engine | Models | Key required |
+|--------|--------|-------------|
+| `openclaw` | Any model via OpenClaw gateway | No (uses OpenClaw auth) |
+| `openrouter` | GPT-4o, Claude, Gemini, etc. | [openrouter.ai](https://openrouter.ai) |
+| `anthropic` | Claude 3.5 Haiku, Sonnet, etc. | [console.anthropic.com](https://console.anthropic.com) |
+| `ollama` | Any local model | No (local) |
+
+---
+
 ## Roadmap
 
 - [ ] **LLM vs LLM mode** — pit two AI models against each other and watch

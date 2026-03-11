@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, IncomingMessage, ServerResponse } from 'http';
 import { readFileSync, existsSync } from 'fs';
@@ -764,9 +767,26 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
 function spawnEulerAgent(roomId: string, difficulty: string) {
   const agentPath = join(__dirname, '..', '..', 'agent-player', 'euler_play.py');
   console.log(`[euler] Spawning agent for room ${roomId} (difficulty=${difficulty})`);
-  const proc = spawn('python3', [agentPath, roomId, '--mode', 'ai', '--ai-engine', 'openclaw', '--difficulty', difficulty], {
+
+  // Default: openclaw (unchanged). Self-hosters can override via .env
+  const aiEngine = process.env.AI_ENGINE || 'openclaw';
+  const aiModel  = process.env.AI_MODEL;
+
+  const args = [agentPath, roomId, '--mode', 'ai',
+                '--ai-engine', aiEngine, '--difficulty', difficulty];
+  if (aiModel) args.push('--ai-model', aiModel);
+
+  // Pass API key into subprocess env
+  const childEnv = { ...process.env };
+  if (process.env.AI_API_KEY) {
+    childEnv.OPENROUTER_API_KEY = process.env.AI_API_KEY;
+    childEnv.ANTHROPIC_API_KEY  = process.env.AI_API_KEY;
+  }
+
+  const proc = spawn('python3', args, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: join(__dirname, '..', '..', 'agent-player'),
+    env: childEnv,
   });
   proc.stdout?.on('data', (d: Buffer) => {
     for (const line of d.toString().split('\n').filter(Boolean))
