@@ -3,8 +3,8 @@
 euler_play.py — OpenClaw's board game client (AI-powered via game server API)
 
 Architecture:
-  - Two AI modes: "euler" (LLM via /api/move) and "engine" (Stockfish/Fairy-Stockfish)
-  - In-game chat: routed via server API (/api/chat) in both modes
+  - Two AI modes: "euler" (LLM via ask_move.py) and "engine" (Stockfish/Fairy-Stockfish)
+  - In-game chat: openclaw → server /api/chat, direct API → ask_move.py functions
   - In-game commands: /engine [difficulty] to switch to engine, /euler to switch to LLM
   - Difficulty levels: beginner, easy, medium, hard, max (engine Skill Level)
   - Local algorithms: gomoku (minimax) / chess / xiangqi always available as fallback
@@ -65,26 +65,25 @@ async def api_chat(base_url: str, text: str, game_context: str = "", game_type: 
     return None
 
 
-def chat_via_direct_api(text: str, game_context: str, ai_engine: str, ai_model: str | None) -> str | None:
+def chat_via_direct_api(text: str, game_context: str, engine: str, model: str | None) -> str | None:
     """Generate a chat reply using a direct AI API (non-openclaw engines)."""
+    import ask_move
+    system_prompt = (
+        "You are an AI playing a board game. Reply naturally to your opponent's chat message. "
+        "Keep replies short (1-2 sentences), friendly, and in the same language as their message. "
+        f"Game context: {game_context}" if game_context else
+        "You are an AI playing a board game. Reply naturally. Keep replies short and friendly."
+    )
+    engines = {
+        "openai": ask_move.call_openai,
+        "openrouter": ask_move.call_openrouter,
+        "anthropic": ask_move.call_anthropic,
+    }
+    fn = engines.get(engine)
+    if not fn:
+        return None
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import ask_move
-        system_prompt = (
-            "You are an AI playing a board game. Reply naturally to your opponent's chat message. "
-            "Keep replies short (1-2 sentences), friendly, and in the same language as their message. "
-            f"Game context: {game_context}" if game_context else
-            "You are an AI playing a board game. Reply naturally. Keep replies short and friendly."
-        )
-        engines = {
-            "openai": ask_move.call_openai,
-            "openrouter": ask_move.call_openrouter,
-            "anthropic": ask_move.call_anthropic,
-        }
-        fn = engines.get(ai_engine)
-        if not fn:
-            return None
-        return fn(system_prompt, text, ai_model, 20)
+        return fn(system_prompt, text, model, 20)
     except Exception as e:
         print(f"[chat_direct] error: {e}")
         return None
@@ -593,14 +592,18 @@ async def main():
         "move": ["Hmm 🤔", "Interesting...", "Your move!", ""],
     }
 
+    async def chat_dispatch(text: str, context: str = "", gt: str = "") -> str | None:
+        """Route chat to the appropriate backend (openclaw server API or direct API)."""
+        if ai_engine == "openclaw":
+            return await api_chat(base_url, text, context, gt)
+        else:
+            return await asyncio.get_event_loop().run_in_executor(
+                None, lambda: chat_via_direct_api(text, context, ai_engine, ai_model)
+            )
+
     async def chat_reply(text: str, context: str = "", gt: str = "") -> str | None:
         if ai_chat:
-            if ai_engine == "openclaw":
-                reply = await api_chat(base_url, text, context, gt)
-            else:
-                reply = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: chat_via_direct_api(text, context, ai_engine, ai_model)
-                )
+            reply = await chat_dispatch(text, context, gt)
             if reply:
                 return reply
         # Fallback to simple keyword match
@@ -615,12 +618,7 @@ async def main():
 
     async def event_reply(text: str, fallback_key: str, context: str = "", gt: str = "") -> str:
         if ai_chat:
-            if ai_engine == "openclaw":
-                reply = await api_chat(base_url, text, context, gt)
-            else:
-                reply = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: chat_via_direct_api(text, context, ai_engine, ai_model)
-                )
+            reply = await chat_dispatch(text, context, gt)
             if reply:
                 return reply
         return random.choice(CANNED.get(fallback_key, ["😄"]))
@@ -704,6 +702,8 @@ async def main():
 
             cmd = [sys.executable, ASK_MOVE_PATH, "--game", gt, "--side", side,
                    "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
+            if gt == "chess" and gs.get("fen"):
+                cmd += ["--fen", gs["fen"]]
             if ai_model:
                 cmd += ["--model", ai_model]
             try:

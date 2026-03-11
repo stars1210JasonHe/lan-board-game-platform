@@ -74,7 +74,7 @@ function loadReference(skillName: string, refName: string): string {
   } catch { return ''; }
 }
 
-// Pre-load skills at startup
+// Pre-load skills at startup (only used by deprecated handleApiMove in index.ts)
 const CHESS_SKILL = loadSkill('chess-player');
 const CHESS_OPENINGS = loadReference('chess-player', 'openings.md');
 const XIANGQI_SKILL = loadSkill('xiangqi-player');
@@ -178,6 +178,7 @@ export async function llmChat(
 
 /**
  * Get the pre-loaded skill content for a game type.
+ * DEPRECATED: Only used by handleApiMove (which is no longer called by euler_play.py).
  */
 export function getSkill(gameType: 'chess' | 'xiangqi'): string {
   if (gameType === 'chess') {

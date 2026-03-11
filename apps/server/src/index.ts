@@ -567,6 +567,9 @@ function jsonResponse(res: ServerResponse, status: number, data: any) {
 
 // LLM provider loaded from llm.ts (supports OpenClaw CLI + direct API)
 
+// DEPRECATED: handleApiMove is no longer called by euler_play.py (which now uses
+// ask_move.py directly). Kept for potential external consumers (curl, other bots).
+// Safe to remove once confirmed no external callers exist.
 async function handleApiMove(req: IncomingMessage, res: ServerResponse) {
   try {
     const body = JSON.parse(await readBody(req));
@@ -817,7 +820,7 @@ const httpServer = createServer((req, res) => {
     return;
   }
   if (req.method === 'POST' && req.url === '/api/move') {
-    handleApiMove(req, res);
+    handleApiMove(req, res); // DEPRECATED — see comment above handleApiMove
     return;
   }
   if (req.method === 'POST' && req.url === '/api/chat') {

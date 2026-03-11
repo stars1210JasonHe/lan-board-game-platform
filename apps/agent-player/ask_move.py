@@ -59,34 +59,94 @@ def render_board(game: str, board: list, side: str) -> str:
     return "\n".join(lines)
 
 
-def build_user_prompt(game: str, board: list, side: str, legal_moves: list) -> str:
+def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
+                      fen: str | None = None, san_moves: list | None = None) -> str:
     """Build the user prompt with board + legal moves."""
     board_str = render_board(game, board, side)
-    moves_str = ", ".join(
-        f"{m['fromRow']},{m['fromCol']},{m['toRow']},{m['toCol']}" for m in legal_moves
-    )
-    return (
-        f"{board_str}\n\n"
-        f"Legal moves: [{moves_str}]\n\n"
-        f"Pick the BEST move. Reply with ONLY one line: fromRow,fromCol,toRow,toCol\n"
-        f"Example: 6,0,5,0\n"
-        f"No explanation — just the four numbers separated by commas."
-    )
+
+    if game == "chess" and san_moves:
+        # Chess with SAN: show FEN and SAN legal moves
+        moves_str = ", ".join(san_moves)
+        return (
+            f"{board_str}\n\n"
+            f"FEN: {fen}\n"
+            f"Legal moves (SAN): [{moves_str}]\n\n"
+            f"Pick the BEST move. Reply with ONLY the SAN notation.\n"
+            f"Example: Nf3\n"
+            f"No explanation — just the move."
+        )
+    else:
+        # Xiangqi / fallback: coordinate format
+        moves_str = ", ".join(
+            f"{m['fromRow']},{m['fromCol']},{m['toRow']},{m['toCol']}" for m in legal_moves
+        )
+        return (
+            f"{board_str}\n\n"
+            f"Legal moves: [{moves_str}]\n\n"
+            f"Pick the BEST move. Reply with ONLY one line: fromRow,fromCol,toRow,toCol\n"
+            f"Example: 6,0,5,0\n"
+            f"No explanation — just the four numbers separated by commas."
+        )
 
 
-def parse_move(text: str, legal_moves: list) -> str | None:
-    """Extract fromRow,fromCol,toRow,toCol from LLM response text."""
-    # Try to find a pattern like digits,digits,digits,digits
+def parse_move(text: str, legal_moves: list, fen: str | None = None,
+               san_moves: list | None = None) -> str | None:
+    """Extract a move from LLM response. Returns fromRow,fromCol,toRow,toCol string.
+
+    For chess with SAN: parses SAN notation and converts to coordinates using python-chess.
+    For xiangqi: parses coordinate format (digits,digits,digits,digits).
+    """
+    if fen and san_moves:
+        # Chess SAN mode: parse SAN and convert to coordinates
+        return _parse_chess_san(text, fen, san_moves)
+
+    # Coordinate mode (xiangqi / chess fallback)
     match = re.search(r"(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", text)
     if not match:
         return None
-    move_str = f"{match.group(1)},{match.group(2)},{match.group(3)},{match.group(4)}"
-    # Validate against legal moves
     fr, fc, tr, tc = int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))
     for m in legal_moves:
         if m["fromRow"] == fr and m["fromCol"] == fc and m["toRow"] == tr and m["toCol"] == tc:
-            return move_str
+            return f"{fr},{fc},{tr},{tc}"
     return None
+
+
+def _parse_chess_san(text: str, fen: str, san_moves: list) -> str | None:
+    """Parse SAN move from LLM response, convert to fromRow,fromCol,toRow,toCol."""
+    import chess
+    # Extract the first word that looks like a SAN move
+    text = text.strip()
+    # Try the first token (strip trailing punctuation)
+    candidate = text.split()[0].rstrip(".!?:,") if text else ""
+    board = chess.Board(fen)
+
+    # Try the candidate directly
+    for san in san_moves:
+        if candidate == san:
+            try:
+                m = board.parse_san(san)
+                return _uci_to_coords(m.uci())
+            except Exception:
+                pass
+
+    # Scan response for any legal SAN move
+    for san in san_moves:
+        if san in text:
+            try:
+                m = board.parse_san(san)
+                return _uci_to_coords(m.uci())
+            except Exception:
+                pass
+    return None
+
+
+def _uci_to_coords(uci: str) -> str:
+    """Convert UCI string (e.g. 'g1f3') to fromRow,fromCol,toRow,toCol."""
+    fc = ord(uci[0]) - ord('a')
+    fr = 8 - int(uci[1])
+    tc = ord(uci[2]) - ord('a')
+    tr = 8 - int(uci[3])
+    return f"{fr},{fc},{tr},{tc}"
 
 
 def random_move(legal_moves: list) -> str:
@@ -284,37 +344,62 @@ ENGINES = {
 
 def main():
     parser = argparse.ArgumentParser(description="Ask an LLM for the best board game move")
-    parser.add_argument("--game", required=True, choices=["xiangqi", "chess"])
+    parser.add_argument("--game", required=True, choices=["xiangqi", "chess", "gomoku"])
     parser.add_argument("--side", required=True)
     parser.add_argument("--board-json", required=True, help="JSON with board and legalMoves")
     parser.add_argument("--engine", default="openclaw", choices=list(ENGINES.keys()))
     parser.add_argument("--model", default=None)
     parser.add_argument("--timeout", type=int, default=8)
+    parser.add_argument("--fen", default=None, help="FEN string for chess SAN resolution")
     args = parser.parse_args()
 
     data = json.loads(args.board_json)
     board = data.get("board", [])
     legal_moves = data.get("legalMoves", [])
 
-    if not legal_moves:
+    if not legal_moves and args.game != "gomoku":
         print('resign')
         sys.exit(0)
 
+    # For chess with FEN: generate SAN legal moves using python-chess
+    san_moves = None
+    if args.game == "chess" and args.fen:
+        try:
+            import chess
+            cb = chess.Board(args.fen)
+            san_moves = [cb.san(m) for m in cb.legal_moves]
+        except Exception as e:
+            print(f"[ask_move] SAN generation failed: {e}", file=sys.stderr)
+
     system_prompt = load_system_prompt(args.game)
-    user_prompt = build_user_prompt(args.game, board, args.side, legal_moves)
+    user_prompt = build_user_prompt(args.game, board, args.side, legal_moves,
+                                    fen=args.fen, san_moves=san_moves)
 
     engine_fn = ENGINES[args.engine]
     response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
 
     if response:
-        move = parse_move(response, legal_moves)
+        move = parse_move(response, legal_moves, fen=args.fen, san_moves=san_moves)
         if move:
             print(move)
             return
 
     # Fallback: random legal move
     print(f"[ask_move] Falling back to random move", file=sys.stderr)
-    print(random_move(legal_moves))
+    if args.game == "gomoku":
+        # Gomoku: pick a random empty cell near center
+        size = data.get("size", 15)
+        center = size // 2
+        empties = []
+        for r in range(size):
+            for c in range(size):
+                if board[r][c] == 0:
+                    empties.append((r, c, abs(r - center) + abs(c - center)))
+        empties.sort(key=lambda x: x[2])
+        pick = empties[random.randint(0, min(4, len(empties) - 1))] if empties else (center, center, 0)
+        print(f"{pick[0]},{pick[1]}")
+    else:
+        print(random_move(legal_moves))
 
 
 if __name__ == "__main__":
