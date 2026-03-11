@@ -50,35 +50,6 @@ def api_post(base_url: str, endpoint: str, data: dict, timeout: float = 60) -> d
         return None
 
 
-async def api_move(base_url: str, game_state: dict, side: str) -> dict | None:
-    """Request an AI move from the server API (handles chess, xiangqi, and gomoku)."""
-    gt = game_state.get("gameType", "gomoku")
-    # Pass all game state fields; server uses gameType to build the right prompt
-    data = {k: v for k, v in game_state.items() if not isinstance(v, list) or k in ("board", "legalMovesSAN", "legalMovesCoord")}
-    data["side"] = side
-    result = await asyncio.get_event_loop().run_in_executor(
-        None, lambda: api_post(base_url, "/api/move", data)
-    )
-    if not result:
-        return None
-    if "error" in result:
-        print(f"⚠️ AI move: {result['error']}")
-        return None
-    # Chess: returns {uci}
-    if gt == "chess" and "uci" in result:
-        print(f"🧠 AI chose: {result['uci']}")
-        return {"uci": result["uci"]}
-    # Xiangqi: returns {fromRow, fromCol, toRow, toCol}
-    if gt == "xiangqi" and "fromRow" in result:
-        print(f"🧠 AI chose: {result}")
-        return result
-    # Gomoku: returns {row, col}
-    if "row" in result and "col" in result:
-        print(f"🧠 AI chose: ({result['row']}, {result['col']})")
-        return {"row": result["row"], "col": result["col"]}
-    return None
-
-
 async def api_chat(base_url: str, text: str, game_context: str = "", game_type: str = "") -> str | None:
     """Request a chat reply from the server API."""
     data = {"text": text}
@@ -96,9 +67,8 @@ async def api_chat(base_url: str, text: str, game_context: str = "", game_type: 
 
 def chat_via_direct_api(text: str, game_context: str, ai_engine: str, ai_model: str | None) -> str | None:
     """Generate a chat reply using a direct AI API (non-openclaw engines)."""
-    import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "game-player"))
     try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import ask_move
         system_prompt = (
             "You are an AI playing a board game. Reply naturally to your opponent's chat message. "
@@ -462,9 +432,9 @@ def chess_move(legal_moves):
 
 # ── Xiangqi AI (local fallback) ───────────────────────────────────────────────
 
-def xiangqi_move(board_rows, side):
-    """Basic xiangqi move generator using simple piece movement rules.
-    Generates plausible (not guaranteed legal) moves; server validates."""
+def xiangqi_legal_moves(board_rows, side):
+    """Generate all pseudo-legal xiangqi moves for the given side.
+    Returns list of {fromRow, fromCol, toRow, toCol} dicts."""
     upper = side == 'red'
     board = [list(row) for row in board_rows]
 
@@ -551,177 +521,28 @@ def xiangqi_move(board_rows, side):
                         moves.append((r, c+dc))
         return moves
 
-    # Collect all moves, prefer captures
     all_moves = []
-    captures = []
-    pieces = []
     for r, row in enumerate(board):
         for c, p in enumerate(row):
             if p == ' ':
                 continue
-            if (p == p.upper()) == upper:
-                pieces.append((r, c, p))
-
-    for r, c, p in pieces:
-        for nr, nc in piece_moves(r, c, p):
-            move = {"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc}
-            all_moves.append(move)
-            if is_enemy(nr, nc):
-                captures.append(move)
-
-    if captures:
-        return random.choice(captures)
-    if all_moves:
-        return random.choice(all_moves)
-    return None
+            if (p == p.upper()) != upper:
+                continue
+            for nr, nc in piece_moves(r, c, p):
+                all_moves.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
+    return all_moves
 
 
-# ── AI move (via ask_move.py) ─────────────────────────────────────────────────
-
-def ai_xiangqi_move(board_rows, side, ai_engine='openclaw', ai_model=None):
-    """Get a xiangqi move from ask_move.py (LLM-based)."""
-    # Build legal moves using the local generator
-    upper = side == 'red'
+def xiangqi_move(board_rows, side):
+    """Pick a random xiangqi move, preferring captures."""
+    moves = xiangqi_legal_moves(board_rows, side)
+    if not moves:
+        return None
     board = [list(row) for row in board_rows]
-
-    def in_bounds(r, c):
-        return 0 <= r <= 9 and 0 <= c <= 8
-    def is_enemy(r, c):
-        p = board[r][c]
-        if p == ' ': return False
-        return (p == p.upper()) != upper
-    def is_empty(r, c):
-        return board[r][c] == ' '
-    def can_target(r, c):
-        return in_bounds(r, c) and (is_empty(r, c) or is_enemy(r, c))
-
-    # Reuse xiangqi_move's piece_moves logic to get legal moves list
-    legal_moves = []
-    for r, row in enumerate(board):
-        for c, p in enumerate(row):
-            if p == ' ': continue
-            if (p == p.upper()) != upper: continue
-            t = p.upper()
-            targets = []
-            if t == 'K':
-                palace_rows = range(0, 3) if upper else range(7, 10)
-                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                    nr, nc = r+dr, c+dc
-                    if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
-                        targets.append((nr, nc))
-            elif t == 'A':
-                palace_rows = range(0, 3) if upper else range(7, 10)
-                for dr, dc in [(1,1),(1,-1),(-1,1),(-1,-1)]:
-                    nr, nc = r+dr, c+dc
-                    if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
-                        targets.append((nr, nc))
-            elif t == 'B':
-                home = range(0, 5) if upper else range(5, 10)
-                for dr, dc in [(2,2),(2,-2),(-2,2),(-2,-2)]:
-                    nr, nc = r+dr, c+dc
-                    mr, mc = r+dr//2, c+dc//2
-                    if in_bounds(nr, nc) and nr in home and is_empty(mr, mc) and can_target(nr, nc):
-                        targets.append((nr, nc))
-            elif t == 'N':
-                for dr, dc, br, bc in [(-1,0,-2,1),(-1,0,-2,-1),(1,0,2,1),(1,0,2,-1),(0,-1,1,-2),(0,-1,-1,-2),(0,1,1,2),(0,1,-1,2)]:
-                    sr, sc = r+dr, c+dc
-                    if in_bounds(sr, sc) and is_empty(sr, sc):
-                        nr, nc = r+br, c+bc
-                        if in_bounds(nr, nc) and can_target(nr, nc):
-                            targets.append((nr, nc))
-            elif t == 'R':
-                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                    nr, nc = r+dr, c+dc
-                    while in_bounds(nr, nc):
-                        if is_empty(nr, nc): targets.append((nr, nc))
-                        else:
-                            if is_enemy(nr, nc): targets.append((nr, nc))
-                            break
-                        nr += dr; nc += dc
-            elif t == 'C':
-                for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                    nr, nc = r+dr, c+dc
-                    jumped = False
-                    while in_bounds(nr, nc):
-                        if not jumped:
-                            if is_empty(nr, nc): targets.append((nr, nc))
-                            else: jumped = True
-                        else:
-                            if not is_empty(nr, nc):
-                                if is_enemy(nr, nc): targets.append((nr, nc))
-                                break
-                        nr += dr; nc += dc
-            elif t == 'P':
-                fwd = 1 if upper else -1
-                crossed = r >= 5 if upper else r <= 4
-                nr, nc = r+fwd, c
-                if in_bounds(nr, nc) and can_target(nr, nc): targets.append((nr, nc))
-                if crossed:
-                    for dc in [-1, 1]:
-                        if in_bounds(r, c+dc) and can_target(r, c+dc): targets.append((r, c+dc))
-            for nr, nc in targets:
-                legal_moves.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
-
-    if not legal_moves:
-        return xiangqi_move(board_rows, side)
-
-    board_json = json.dumps({"board": board_rows, "legalMoves": legal_moves})
-    cmd = [sys.executable, ASK_MOVE_PATH, "--game", "xiangqi", "--side", side,
-           "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
-    if ai_model:
-        cmd += ["--model", ai_model]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        line = result.stdout.strip()
-        if line == 'resign':
-            return {'resign': True}
-        parts = line.split(",")
-        if len(parts) == 4:
-            return {"fromRow": int(parts[0]), "fromCol": int(parts[1]),
-                    "toRow": int(parts[2]), "toCol": int(parts[3])}
-    except Exception as e:
-        print(f"⚠️ ask_move.py error: {e}")
-    return xiangqi_move(board_rows, side)
-
-
-def ai_chess_move(legal_moves, board_rows=None, side='white', ai_engine='openclaw', ai_model=None):
-    """Get a chess move from ask_move.py (LLM-based)."""
-    if not legal_moves:
-        return chess_move(legal_moves)
-
-    # Build legalMoves in fromRow,fromCol,toRow,toCol format from UCI
-    legal_move_dicts = []
-    for uci in legal_moves:
-        if len(uci) >= 4:
-            fc = ord(uci[0]) - ord('a')
-            fr = 8 - int(uci[1])
-            tc = ord(uci[2]) - ord('a')
-            tr = 8 - int(uci[3])
-            legal_move_dicts.append({"fromRow": fr, "fromCol": fc, "toRow": tr, "toCol": tc})
-
-    if not legal_move_dicts or not board_rows:
-        return chess_move(legal_moves)
-
-    board_json = json.dumps({"board": board_rows, "legalMoves": legal_move_dicts})
-    cmd = [sys.executable, ASK_MOVE_PATH, "--game", "chess", "--side", side,
-           "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
-    if ai_model:
-        cmd += ["--model", ai_model]
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        line = result.stdout.strip()
-        if line == 'resign':
-            return {'resign': True}
-        parts = line.split(",")
-        if len(parts) == 4:
-            fr, fc, tr, tc = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
-            # Convert back to UCI
-            uci = chr(ord('a') + fc) + str(8 - fr) + chr(ord('a') + tc) + str(8 - tr)
-            if uci in legal_moves or any(m.startswith(uci) for m in legal_moves):
-                return {"uci": uci}
-    except Exception as e:
-        print(f"⚠️ ask_move.py error: {e}")
-    return chess_move(legal_moves)
+    upper = side == 'red'
+    captures = [m for m in moves if board[m["toRow"]][m["toCol"]] != ' '
+                and (board[m["toRow"]][m["toCol"]].isupper() != upper)]
+    return random.choice(captures) if captures else random.choice(moves)
 
 
 # ── Main client ───────────────────────────────────────────────────────────────
@@ -735,7 +556,7 @@ async def main():
     parser.add_argument("--no-ai-chat", action="store_true",
                         help="Disable AI chat, use canned replies (fallback)")
     parser.add_argument("--mode", choices=["euler", "engine", "ai"], default=None,
-                        help="AI mode: euler (LLM via server), engine (Stockfish), ai (LLM via ask_move.py)")
+                        help="AI mode: euler/ai (LLM via ask_move.py), engine (Stockfish)")
     parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
                         help="Engine difficulty level")
     parser.add_argument("--ai-engine", default="openclaw",
@@ -853,25 +674,76 @@ async def main():
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
 
+        async def _llm_move(gs, gt):
+            """Call ask_move.py as subprocess for LLM-based move."""
+            side = my_side or gs.get("currentPlayer", "")
+            board = gs.get("board", [])
+
+            if gt == "xiangqi":
+                legal = xiangqi_legal_moves(board, side)
+                if not legal:
+                    return None
+                board_json = json.dumps({"board": board, "legalMoves": legal})
+            elif gt == "chess":
+                legal_uci = gs.get("legalMoves", [])
+                legal_dicts = []
+                for uci in legal_uci:
+                    if len(uci) >= 4:
+                        fc = ord(uci[0]) - ord('a')
+                        fr = 8 - int(uci[1])
+                        tc = ord(uci[2]) - ord('a')
+                        tr = 8 - int(uci[3])
+                        legal_dicts.append({"fromRow": fr, "fromCol": fc, "toRow": tr, "toCol": tc})
+                if not legal_dicts:
+                    return None
+                board_json = json.dumps({"board": board, "legalMoves": legal_dicts})
+            elif gt == "gomoku":
+                board_json = json.dumps({"board": board, "size": gs.get("size", 15)})
+            else:
+                return None
+
+            cmd = [sys.executable, ASK_MOVE_PATH, "--game", gt, "--side", side,
+                   "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
+            if ai_model:
+                cmd += ["--model", ai_model]
+            try:
+                result = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                )
+                line = result.stdout.strip()
+                if line == 'resign':
+                    return {'resign': True}
+                parts = line.split(",")
+                if gt == "chess" and len(parts) == 4:
+                    fr, fc, tr, tc = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+                    uci = chr(ord('a') + fc) + str(8 - fr) + chr(ord('a') + tc) + str(8 - tr)
+                    legal_uci = gs.get("legalMoves", [])
+                    if uci in legal_uci or any(m.startswith(uci) for m in legal_uci):
+                        print(f"🧠 LLM chose: {uci}")
+                        return {"uci": uci}
+                    return None
+                elif gt == "xiangqi" and len(parts) == 4:
+                    move = {"fromRow": int(parts[0]), "fromCol": int(parts[1]),
+                            "toRow": int(parts[2]), "toCol": int(parts[3])}
+                    print(f"🧠 LLM chose: {move}")
+                    return move
+                elif gt == "gomoku" and len(parts) == 2:
+                    move = {"row": int(parts[0]), "col": int(parts[1])}
+                    print(f"🧠 LLM chose: {move}")
+                    return move
+            except Exception as e:
+                print(f"⚠️ ask_move.py error: {e}")
+            return None
+
         async def pick_move(gs):
-            """Returns (move, used_fallback) tuple."""
+            """Returns (move, used_fallback) tuple.
+            Single dispatch: engine → LLM (ask_move.py) → local fallback."""
             nonlocal mode, difficulty
-            # Bug #22: Skip immediately if game is already over
             if not gs or gs.get("finished"):
                 return None, False
             gt = gs.get("gameType")
 
-            # AI mode: use server /api/move endpoint (has legal moves validation + retries)
-            if mode == 'ai' and gt in ('chess', 'xiangqi'):
-                try:
-                    ai_result = await api_move(base_url, gs, my_side)
-                    if ai_result:
-                        return ai_result, False
-                    print(f"⚠️ AI mode /api/move failed for {gt}, falling back")
-                except Exception as e:
-                    print(f"⚠️ AI mode error: {e}, falling back")
-
-            # Engine mode for chess/xiangqi
+            # 1. Engine mode: Stockfish / Fairy-Stockfish
             if mode == 'engine' and gt in ('chess', 'xiangqi'):
                 try:
                     if gt == 'chess':
@@ -896,35 +768,27 @@ async def main():
                             print(f"⚙️ Engine chose: {result}")
                             return result, False
                 except Exception as e:
-                    print(f"⚠️ Engine error: {e}, falling back")
+                    print(f"⚠️ Engine error: {e}, falling back to LLM")
 
-            # Euler/LLM mode or fallback
+            # 2. LLM mode: ask_move.py subprocess (skipped if --no-ai-chat)
+            if ai_chat:
+                result = await _llm_move(gs, gt)
+                if result:
+                    return result, False
+                if gt != 'gomoku':
+                    print(f"⚠️ LLM move failed for {gt}, falling back to local")
+
+            # 3. Local fallback (always available)
             if gt == "gomoku":
-                if ai_chat and mode == 'euler':
-                    ai_result = await api_move(base_url, gs, my_side)
-                    if ai_result:
-                        return ai_result, False
-                    print("⚠️ AI move failed, falling back to minimax")
-                # Minimax algorithm (not a timeout/random fallback)
                 board = [row[:] for row in gs["board"]]
                 return gomoku_move(board, gs["size"], gs["currentPlayer"]), False
             elif gt == "chess":
-                if ai_chat and mode == 'euler':
-                    ai_result = await api_move(base_url, gs, my_side)
-                    if ai_result:
-                        return ai_result, False
-                    print("⚠️ Chess AI move failed, falling back to local")
                 legal = gs.get("legalMoves", [])
                 if not legal:
-                    print("⚠️ No legal moves for chess — game should be over (checkmate/stalemate)")
+                    print("⚠️ No legal moves for chess — game should be over")
                     return None, False
                 return chess_move(legal), True
             elif gt == "xiangqi":
-                if ai_chat and mode == 'euler':
-                    ai_result = await api_move(base_url, gs, my_side)
-                    if ai_result:
-                        return ai_result, False
-                    print("⚠️ Xiangqi AI move failed, falling back to local")
                 return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red")), True
             return None, False
 
