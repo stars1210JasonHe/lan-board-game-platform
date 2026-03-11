@@ -615,7 +615,7 @@ Reply with ONLY one SAN move (e.g. Nf3):`;
       let userMsg = baseUserMsg;
       try {
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const reply = await llmChat('euler-chess-moves', chessSkill, userMsg, 30);
+          const reply = await llmChat('euler-chess-moves', chessSkill, userMsg, 60);
           const move = parseChessMove(reply);
           if (move) { jsonResponse(res, 200, move); return; }
           userMsg = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesSAN.join(', ')}. Reply with just one SAN move:`;
@@ -669,7 +669,7 @@ Reply with ONLY the coordinate (e.g. b0c2):`;
       let userMsg = baseUserMsg;
       try {
         for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const reply = await llmChat('euler-xiangqi-moves', xiangqiSkill, userMsg, 30);
+          const reply = await llmChat('euler-xiangqi-moves', xiangqiSkill, userMsg, 60);
           const move = parseXiangqiMove(reply);
           if (move) { jsonResponse(res, 200, move); return; }
           userMsg = `"${reply.trim().split(/\s/)[0]}" is not a legal move. Legal moves: ${legalMovesCoord.join(', ')}. Reply with just one coordinate (e.g. b0c2):`;
@@ -707,7 +707,7 @@ Pick coordinates (row,col 0-indexed):`;
     let userMsg = basePrompt;
     try {
       for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-        const reply = await llmChat('euler-gomoku-moves', '', userMsg, 30);
+        const reply = await llmChat('euler-gomoku-moves', '', userMsg, 60);
         const move = parseGomokuMove(reply, board);
         if (move) { jsonResponse(res, 200, move); return; }
         userMsg = `"${reply.trim()}" is not a valid empty cell. Reply with row,col (0-indexed, must be empty):`;
@@ -748,7 +748,7 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
       : CHAT_SYSTEM_CONTEXT;
 
     try {
-      const reply = await llmChat('euler-game-chat', systemMsg, safeText, 30);
+      const reply = await llmChat('euler-game-chat', systemMsg, safeText, 60);
       if (!reply || reply.trim() === '' || reply.trim() === 'NO_REPLY' || reply.trim() === 'HEARTBEAT_OK') {
         jsonResponse(res, 200, { reply: null });
         return;
