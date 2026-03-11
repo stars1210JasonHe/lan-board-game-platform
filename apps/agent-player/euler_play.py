@@ -668,7 +668,7 @@ def ai_xiangqi_move(board_rows, side, ai_engine='openclaw', ai_model=None):
 
     board_json = json.dumps({"board": board_rows, "legalMoves": legal_moves})
     cmd = [sys.executable, ASK_MOVE_PATH, "--game", "xiangqi", "--side", side,
-           "--board-json", board_json, "--engine", ai_engine]
+           "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
     if ai_model:
         cmd += ["--model", ai_model]
     try:
@@ -705,7 +705,7 @@ def ai_chess_move(legal_moves, board_rows=None, side='white', ai_engine='opencla
 
     board_json = json.dumps({"board": board_rows, "legalMoves": legal_move_dicts})
     cmd = [sys.executable, ASK_MOVE_PATH, "--game", "chess", "--side", side,
-           "--board-json", board_json, "--engine", ai_engine]
+           "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
     if ai_model:
         cmd += ["--model", ai_model]
     try:
