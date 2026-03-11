@@ -95,6 +95,32 @@ async def api_chat(base_url: str, text: str, game_context: str = "", game_type: 
     return None
 
 
+def chat_via_direct_api(text: str, game_context: str, ai_engine: str, ai_model: str | None) -> str | None:
+    """Generate a chat reply using a direct AI API (non-openclaw engines)."""
+    import sys, os
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "skills", "game-player"))
+    try:
+        import ask_move
+        system_prompt = (
+            "You are an AI playing a board game. Reply naturally to your opponent's chat message. "
+            "Keep replies short (1-2 sentences), friendly, and in the same language as their message. "
+            f"Game context: {game_context}" if game_context else
+            "You are an AI playing a board game. Reply naturally. Keep replies short and friendly."
+        )
+        engines = {
+            "openai": ask_move.call_openai,
+            "openrouter": ask_move.call_openrouter,
+            "anthropic": ask_move.call_anthropic,
+        }
+        fn = engines.get(ai_engine)
+        if not fn:
+            return None
+        return fn(system_prompt, text, ai_model, 20)
+    except Exception as e:
+        print(f"[chat_direct] error: {e}")
+        return None
+
+
 # ── Board summary ─────────────────────────────────────────────────────────────
 
 def board_summary(game_state: dict) -> str:
@@ -714,7 +740,7 @@ async def main():
     parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
                         help="Engine difficulty level")
     parser.add_argument("--ai-engine", default="openclaw",
-                        choices=["openclaw", "anthropic", "openrouter", "ollama"],
+                        choices=["openclaw", "anthropic", "openrouter", "ollama", "openai"],
                         help="AI engine for --mode ai (default: openclaw)")
     parser.add_argument("--ai-model", default=None,
                         help="Model name for --mode ai (optional)")
@@ -747,7 +773,12 @@ async def main():
 
     async def chat_reply(text: str, context: str = "", gt: str = "") -> str | None:
         if ai_chat:
-            reply = await api_chat(base_url, text, context, gt)
+            if ai_engine == "openclaw":
+                reply = await api_chat(base_url, text, context, gt)
+            else:
+                reply = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: chat_via_direct_api(text, context, ai_engine, ai_model)
+                )
             if reply:
                 return reply
         # Fallback to simple keyword match
@@ -762,7 +793,12 @@ async def main():
 
     async def event_reply(text: str, fallback_key: str, context: str = "", gt: str = "") -> str:
         if ai_chat:
-            reply = await api_chat(base_url, text, context, gt)
+            if ai_engine == "openclaw":
+                reply = await api_chat(base_url, text, context, gt)
+            else:
+                reply = await asyncio.get_event_loop().run_in_executor(
+                    None, lambda: chat_via_direct_api(text, context, ai_engine, ai_model)
+                )
             if reply:
                 return reply
         return random.choice(CANNED.get(fallback_key, ["😄"]))
@@ -868,9 +904,9 @@ async def main():
                     if ai_result:
                         return ai_result, False
                     print("⚠️ AI move failed, falling back to minimax")
-                # Minimax algorithm
+                # Minimax algorithm (not a timeout/random fallback)
                 board = [row[:] for row in gs["board"]]
-                return gomoku_move(board, gs["size"], gs["currentPlayer"]), True
+                return gomoku_move(board, gs["size"], gs["currentPlayer"]), False
             elif gt == "chess":
                 if ai_chat and mode == 'euler':
                     ai_result = await api_move(base_url, gs, my_side)

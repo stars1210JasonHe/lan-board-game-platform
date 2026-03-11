@@ -781,6 +781,7 @@ function spawnEulerAgent(roomId: string, difficulty: string) {
   if (process.env.AI_API_KEY) {
     childEnv.OPENROUTER_API_KEY = process.env.AI_API_KEY;
     childEnv.ANTHROPIC_API_KEY  = process.env.AI_API_KEY;
+    childEnv.OPENAI_API_KEY     = process.env.AI_API_KEY;
   }
 
   const proc = spawn('python3', args, {
