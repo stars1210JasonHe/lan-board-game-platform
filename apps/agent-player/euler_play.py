@@ -20,8 +20,7 @@ from urllib.error import URLError
 import websockets
 
 EULER_NICK = "OpenClaw 🤖"
-ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                             "..", "..", "..", "skills", "game-player", "ask_move.py")
+ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ask_move.py")
 
 # ── Engine config ─────────────────────────────────────────────────────────────
 
