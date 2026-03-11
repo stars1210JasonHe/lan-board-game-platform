@@ -38,7 +38,7 @@ MAX_ILLEGAL_RETRIES = 5  # max retries before giving up on an illegal move
 
 # ── HTTP API helpers ──────────────────────────────────────────────────────────
 
-def api_post(base_url: str, endpoint: str, data: dict, timeout: float = 35) -> dict | None:
+def api_post(base_url: str, endpoint: str, data: dict, timeout: float = 60) -> dict | None:
     """POST JSON to server API, return parsed response or None on failure."""
     url = f"{base_url}{endpoint}"
     body = json.dumps(data).encode()
@@ -646,7 +646,7 @@ def ai_xiangqi_move(board_rows, side, ai_engine='openclaw', ai_model=None):
     if ai_model:
         cmd += ["--model", ai_model]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         line = result.stdout.strip()
         if line == 'resign':
             return {'resign': True}
@@ -683,7 +683,7 @@ def ai_chess_move(legal_moves, board_rows=None, side='white', ai_engine='opencla
     if ai_model:
         cmd += ["--model", ai_model]
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
         line = result.stdout.strip()
         if line == 'resign':
             return {'resign': True}
@@ -817,10 +817,11 @@ async def main():
         await send_ws({"type": "join_room", "roomId": room_id})
 
         async def pick_move(gs):
+            """Returns (move, used_fallback) tuple."""
             nonlocal mode, difficulty
             # Bug #22: Skip immediately if game is already over
             if not gs or gs.get("finished"):
-                return None
+                return None, False
             gt = gs.get("gameType")
 
             # AI mode: use server /api/move endpoint (has legal moves validation + retries)
@@ -828,7 +829,7 @@ async def main():
                 try:
                     ai_result = await api_move(base_url, gs, my_side)
                     if ai_result:
-                        return ai_result
+                        return ai_result, False
                     print(f"⚠️ AI mode /api/move failed for {gt}, falling back")
                 except Exception as e:
                     print(f"⚠️ AI mode error: {e}, falling back")
@@ -845,7 +846,7 @@ async def main():
                             )
                             if result and (not legal or result['uci'] in legal):
                                 print(f"⚙️ Engine chose: {result}")
-                                return result
+                                return result, False
                             elif result:
                                 print(f"⚠️ Engine move {result} not in legal moves, falling back")
                     elif gt == 'xiangqi':
@@ -856,7 +857,7 @@ async def main():
                         )
                         if result:
                             print(f"⚙️ Engine chose: {result}")
-                            return result
+                            return result, False
                 except Exception as e:
                     print(f"⚠️ Engine error: {e}, falling back")
 
@@ -865,30 +866,30 @@ async def main():
                 if ai_chat and mode == 'euler':
                     ai_result = await api_move(base_url, gs, my_side)
                     if ai_result:
-                        return ai_result
+                        return ai_result, False
                     print("⚠️ AI move failed, falling back to minimax")
                 # Minimax algorithm
                 board = [row[:] for row in gs["board"]]
-                return gomoku_move(board, gs["size"], gs["currentPlayer"])
+                return gomoku_move(board, gs["size"], gs["currentPlayer"]), True
             elif gt == "chess":
                 if ai_chat and mode == 'euler':
                     ai_result = await api_move(base_url, gs, my_side)
                     if ai_result:
-                        return ai_result
+                        return ai_result, False
                     print("⚠️ Chess AI move failed, falling back to local")
                 legal = gs.get("legalMoves", [])
                 if not legal:
                     print("⚠️ No legal moves for chess — game should be over (checkmate/stalemate)")
-                    return None
-                return chess_move(legal)
+                    return None, False
+                return chess_move(legal), True
             elif gt == "xiangqi":
                 if ai_chat and mode == 'euler':
                     ai_result = await api_move(base_url, gs, my_side)
                     if ai_result:
-                        return ai_result
+                        return ai_result, False
                     print("⚠️ Xiangqi AI move failed, falling back to local")
-                return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red"))
-            return None
+                return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red")), True
+            return None, False
 
         def is_my_turn(gs):
             """Check if it's our turn (handles number vs string comparison)."""
@@ -905,12 +906,14 @@ async def main():
             if mc == last_move_count:
                 return  # already sent a move for this state
             last_move_count = mc
-            move = await pick_move(gs)
+            move, used_fallback = await pick_move(gs)
             if move:
                 if isinstance(move, dict) and move.get('resign'):
                     print("🏳️ No legal moves — resigning")
                     await send_ws({"type": "resign"})
                 else:
+                    if used_fallback:
+                        await send_ws({"type": "chat", "text": "AI超时，随机走棋"})
                     await send_ws({"type": "move", "move": move})
             else:
                 # Bug #22: no move means no legal moves or game finished — server handles it

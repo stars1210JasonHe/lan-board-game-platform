@@ -167,7 +167,7 @@ let turnTimers: Map<string, NodeJS.Timeout> = new Map();
 let turnWarningTimers: Map<string, NodeJS.Timeout> = new Map();
 
 // FEAT-5: Move timeout mechanism
-const TIMEOUT_AI_MS = 30_000;       // AI: 30s → auto-resign
+const TIMEOUT_AI_MS = 60_000;       // AI: 60s → auto-resign
 const TIMEOUT_HUMAN_WARN_MS = 180_000; // Human: 3min → warning
 const TIMEOUT_HUMAN_FORFEIT_MS = 300_000; // Human: 5min → forfeit
 
