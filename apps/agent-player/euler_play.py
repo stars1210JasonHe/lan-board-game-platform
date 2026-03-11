@@ -754,6 +754,8 @@ async def main():
     mode = args.mode or 'euler'
     difficulty = args.difficulty or 'medium'
     cli_mode_set = args.mode is not None  # True if user explicitly set mode via CLI
+    ai_engine = args.ai_engine
+    ai_model = args.ai_model
 
     print(f"Connecting to {ws_uri}...")
     print(f"🎯 Mode: {mode} | Difficulty: {difficulty}")
