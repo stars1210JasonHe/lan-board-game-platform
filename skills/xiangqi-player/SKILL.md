@@ -75,6 +75,16 @@ Uppercase = Red, lowercase = Black.
 - Push pawns across river — they gain sideways movement and become more dangerous
 - King should stay protected; only expose for final checkmate sequence
 
+## Before You Move — Checklist
+
+Think through these BEFORE picking a move:
+1. What is my opponent threatening? (captures, checks, 將軍)
+2. Which of MY pieces are under attack right now?
+3. Can I capture a higher-value piece?
+4. Does my move leave any piece undefended?
+5. After my move, can opponent capture anything for free?
+6. Are the Kings (帥/將) facing each other on same file? (illegal!)
+
 ## Output
 
 Reply with ONLY the coordinate, nothing else:

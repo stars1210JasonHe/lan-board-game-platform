@@ -45,6 +45,15 @@ Q=9, R=5, B=3, N=3, P=1.
 - K+Q vs K: drive King to edge, then checkmate
 - K+R vs K: drive King to edge with opposition
 
+## Before You Move — Checklist
+
+Think through these BEFORE picking a move:
+1. What is my opponent threatening? (captures, checks, forks)
+2. Which of MY pieces are under attack right now?
+3. Can I capture a higher-value piece?
+4. Does my move leave any piece undefended?
+5. After my move, can opponent capture anything for free?
+
 ## Output
 
 Reply with ONLY one SAN move, nothing else:
