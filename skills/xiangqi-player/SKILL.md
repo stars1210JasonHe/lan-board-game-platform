@@ -85,6 +85,16 @@ Think through these BEFORE picking a move:
 5. After my move, can opponent capture anything for free?
 6. Are the Kings (帥/將) facing each other on same file? (illegal!)
 
+## Examples of Good Thinking
+
+Position: Red to move, your 車 on a0 is attacked by opponent's 炮.
+Bad: e0d1 (move advisor, ignores 車 under attack)
+Good: a0a4 (save the 車, keep it active on open file)
+
+Position: You can check with 炮 but it will be captured next move.
+Bad: c7e7 (check but lose 炮 for nothing)
+Good: h0g2 (develop 馬, build attack slowly)
+
 ## Output
 
 Reply with ONLY the coordinate, nothing else:

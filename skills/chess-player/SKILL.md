@@ -54,6 +54,16 @@ Think through these BEFORE picking a move:
 4. Does my move leave any piece undefended?
 5. After my move, can opponent capture anything for free?
 
+## Examples of Good Thinking
+
+Position: White to move, opponent's queen on d8, knight on c6 threatens fork on e7.
+Bad: Qh5 (sends queen far, no real threat)
+Good: Nf3 (develops knight, defends center, prepares castle)
+
+Position: Your rook is attacked by opponent's bishop. You can check with Qa4+.
+Bad: Qa4+ (checking but opponent blocks and you still lose the rook)
+Good: Re1 (save the rook first, stay solid)
+
 ## Output
 
 Reply with ONLY one SAN move, nothing else:
