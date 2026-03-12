@@ -59,10 +59,83 @@ def render_board(game: str, board: list, side: str) -> str:
     return "\n".join(lines)
 
 
+def xiangqi_attacked_pieces_info(fen: str) -> str:
+    """Analyze which pieces are under attack for xiangqi using cchess."""
+    import cchess
+
+    fen_parts = fen.split()
+    short_fen = f"{fen_parts[0]} {fen_parts[1]}"
+    board = cchess.ChessBoard(short_fen)
+
+    side = cchess.RED if fen_parts[1] == 'w' else cchess.BLACK
+    opp = cchess.BLACK if side == cchess.RED else cchess.RED
+
+    PIECE_NAMES = {
+        'k': 'King', 'a': 'Advisor', 'b': 'Elephant',
+        'n': 'Horse', 'r': 'Chariot', 'c': 'Cannon', 'p': 'Soldier',
+    }
+
+    def piece_name(piece):
+        return PIECE_NAMES.get(piece.species, 'piece')
+
+    def square_name(x, y):
+        return chr(ord('a') + x) + str(y)
+
+    def get_attackers(attacking_color, target_sq):
+        result = []
+        for p in board.get_pieces(attacking_color):
+            if p.is_valid_move(target_sq):
+                target_p = board.get_piece(target_sq)
+                if target_p and target_p.color == p.color:
+                    continue
+                result.append(p)
+        return result
+
+    def is_defended(target_sq, defending_color):
+        for p in board.get_pieces(defending_color):
+            if (p.x, p.y) == target_sq:
+                continue
+            if p.is_valid_move(target_sq):
+                return True
+        return False
+
+    our_attacked = []
+    for p in board.get_pieces(side):
+        sq = (p.x, p.y)
+        attackers = get_attackers(opp, sq)
+        if attackers:
+            att_str = ", ".join(f"{piece_name(a).lower()}" for a in attackers)
+            our_attacked.append(f"{piece_name(p)} on {square_name(p.x, p.y)} (by {att_str})")
+
+    opp_capturable = []
+    for p in board.get_pieces(opp):
+        sq = (p.x, p.y)
+        attackers = get_attackers(side, sq)
+        if attackers:
+            defended = is_defended(sq, opp)
+            defense_str = "defended" if defended else "undefended"
+            opp_capturable.append(f"{piece_name(p)} on {square_name(p.x, p.y)} ({defense_str})")
+
+    lines = []
+    if our_attacked:
+        lines.append(f"Your pieces under attack: {', '.join(our_attacked)}")
+    if opp_capturable:
+        lines.append(f"Opponent pieces you can capture: {', '.join(opp_capturable)}")
+    return "\n".join(lines)
+
+
 def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
                       fen: str | None = None, san_moves: list | None = None) -> str:
-    """Build the user prompt with board + legal moves."""
+    """Build the user prompt with board + legal moves + tactical info."""
     board_str = render_board(game, board, side)
+
+    # Attacked pieces info for xiangqi
+    attack_info = ""
+    if game == "xiangqi" and fen:
+        try:
+            attack_info = xiangqi_attacked_pieces_info(fen)
+        except Exception as e:
+            print(f"[ask_move] xiangqi attack info error: {e}", file=sys.stderr)
 
     if game == "chess" and san_moves:
         # Chess with SAN: show FEN and SAN legal moves
@@ -80,9 +153,15 @@ def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
         moves_str = ", ".join(
             f"{m['fromRow']},{m['fromCol']},{m['toRow']},{m['toCol']}" for m in legal_moves
         )
+        extra = ""
+        if game == "xiangqi" and fen:
+            extra += f"\nFEN: {fen}"
+        if attack_info:
+            extra += f"\n{attack_info}"
         return (
             f"{board_str}\n\n"
-            f"Legal moves: [{moves_str}]\n\n"
+            f"Legal moves: [{moves_str}]"
+            f"{extra}\n\n"
             f"Pick the BEST move. Reply with ONLY one line: fromRow,fromCol,toRow,toCol\n"
             f"Example: 6,0,5,0\n"
             f"No explanation — just the four numbers separated by commas."
