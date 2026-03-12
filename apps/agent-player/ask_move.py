@@ -71,68 +71,10 @@ def render_board(game: str, board: list, side: str) -> str:
 
 
 def xiangqi_attacked_pieces_info(fen: str) -> str:
-    """Analyze which pieces are under attack for xiangqi using cchess."""
-    import cchess
-
-    fen_parts = fen.split()
-    short_fen = f"{fen_parts[0]} {fen_parts[1]}"
-    board = cchess.ChessBoard(short_fen)
-
-    side = cchess.RED if fen_parts[1] == 'w' else cchess.BLACK
-    opp = cchess.BLACK if side == cchess.RED else cchess.RED
-
-    PIECE_NAMES = {
-        'k': 'King', 'a': 'Advisor', 'b': 'Elephant',
-        'n': 'Horse', 'r': 'Chariot', 'c': 'Cannon', 'p': 'Soldier',
-    }
-
-    def piece_name(piece):
-        return PIECE_NAMES.get(piece.species, 'piece')
-
-    def square_name(x, y):
-        return chr(ord('a') + x) + str(y)
-
-    def get_attackers(attacking_color, target_sq):
-        result = []
-        for p in board.get_pieces(attacking_color):
-            if p.is_valid_move(target_sq):
-                target_p = board.get_piece(target_sq)
-                if target_p and target_p.color == p.color:
-                    continue
-                result.append(p)
-        return result
-
-    def is_defended(target_sq, defending_color):
-        for p in board.get_pieces(defending_color):
-            if (p.x, p.y) == target_sq:
-                continue
-            if p.is_valid_move(target_sq):
-                return True
-        return False
-
-    our_attacked = []
-    for p in board.get_pieces(side):
-        sq = (p.x, p.y)
-        attackers = get_attackers(opp, sq)
-        if attackers:
-            att_str = ", ".join(f"{piece_name(a).lower()}" for a in attackers)
-            our_attacked.append(f"{piece_name(p)} on {square_name(p.x, p.y)} (by {att_str})")
-
-    opp_capturable = []
-    for p in board.get_pieces(opp):
-        sq = (p.x, p.y)
-        attackers = get_attackers(side, sq)
-        if attackers:
-            defended = is_defended(sq, opp)
-            defense_str = "defended" if defended else "undefended"
-            opp_capturable.append(f"{piece_name(p)} on {square_name(p.x, p.y)} ({defense_str})")
-
-    lines = []
-    if our_attacked:
-        lines.append(f"Your pieces under attack: {', '.join(our_attacked)}")
-    if opp_capturable:
-        lines.append(f"Opponent pieces you can capture: {', '.join(opp_capturable)}")
-    return "\n".join(lines)
+    """Analyze which pieces are under attack for xiangqi (pure Python)."""
+    from xiangqi_attack import fen_to_board, get_attacked_pieces_info
+    board, side = fen_to_board(fen)
+    return get_attacked_pieces_info(board, side)
 
 
 def chess_attacked_pieces_info(fen: str) -> str:
@@ -213,42 +155,31 @@ def check_blunder_chess(fen: str, uci_move: str) -> str | None:
 def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
     """Check if a xiangqi move hangs a piece worth >= 3 (Horse=4, Cannon=4.5, Chariot=9).
     Returns description string if blunder found, None otherwise."""
-    import cchess
-    PIECE_VALUES = {'r': 9, 'c': 4.5, 'n': 4, 'b': 2, 'a': 2, 'p': 1, 'k': 0}
-    PIECE_NAMES = {'r': 'Chariot', 'c': 'Cannon', 'n': 'Horse',
-                   'b': 'Elephant', 'a': 'Advisor', 'p': 'Pawn', 'k': 'King'}
+    from xiangqi_attack import (fen_to_board, copy_board, apply_move,
+                                get_attackers, is_defended, piece_side, RED, BLACK)
+    PIECE_VALUES = {'r': 9, 'c': 4.5, 'n': 4, 'h': 4, 'b': 2, 'e': 2, 'a': 2, 'p': 1, 'k': 0}
+    PIECE_NAMES = {'r': 'Chariot', 'c': 'Cannon', 'n': 'Horse', 'h': 'Horse',
+                   'b': 'Elephant', 'e': 'Elephant', 'a': 'Advisor', 'p': 'Pawn', 'k': 'King'}
 
-    fen_parts = fen.split()
-    short_fen = f"{fen_parts[0]} {fen_parts[1]}"
-    board = cchess.ChessBoard(short_fen)
+    board, side = fen_to_board(fen)
+    opp = BLACK if side == RED else RED
 
-    our_color = cchess.RED if fen_parts[1] == 'w' else cchess.BLACK
-    opp_color = cchess.BLACK if our_color == cchess.RED else cchess.RED
-
-    # Parse move_coords "fr,fc,tr,tc" (board space: row 0 = Red's back rank)
     mc = move_coords.split(',')
     fr, fc, tr, tc = int(mc[0]), int(mc[1]), int(mc[2]), int(mc[3])
-    # cchess coords: x=col, y=row (y=0 = Red's back rank = board row 0)
-    board.move((fc, fr), (tc, tr))
+    board = copy_board(board)
+    apply_move(board, fr, fc, tr, tc)
 
-    for our_piece in board.get_pieces(our_color):
-        sq = (our_piece.x, our_piece.y)
-        val = PIECE_VALUES.get(our_piece.species, 0)
-        if val < 3:
-            continue
-        for opp_piece in board.get_pieces(opp_color):
-            if opp_piece.is_valid_move(sq):
-                target_p = board.get_piece(sq)
-                if target_p and target_p.color == opp_piece.color:
-                    continue
-                defended = False
-                for defender in board.get_pieces(our_color):
-                    if (defender.x, defender.y) != sq and defender.is_valid_move(sq):
-                        defended = True
-                        break
-                if not defended:
-                    name = PIECE_NAMES.get(our_piece.species, 'piece')
-                    return f"Your move hangs your {name}"
+    for r in range(10):
+        for c in range(9):
+            p = board[r][c]
+            if p == ' ' or piece_side(p) != side:
+                continue
+            val = PIECE_VALUES.get(p.lower(), 0)
+            if val < 3:
+                continue
+            if get_attackers(board, r, c, opp) and not is_defended(board, r, c, side):
+                name = PIECE_NAMES.get(p.lower(), 'piece')
+                return f"Your move hangs your {name}"
     return None
 
 
