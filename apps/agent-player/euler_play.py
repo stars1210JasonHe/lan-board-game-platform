@@ -706,9 +706,6 @@ async def main():
                    "--board-json", board_json, "--engine", ai_engine, "--timeout", "50"]
             if gt == "chess" and gs.get("fen"):
                 cmd += ["--fen", gs["fen"]]
-            elif gt == "xiangqi":
-                xiangqi_fen = xiangqi_board_to_fen(board, gs.get("currentPlayer", side))
-                cmd += ["--fen", xiangqi_fen]
             if ai_model:
                 cmd += ["--model", ai_model]
             # P1.2: pass recent move history (last 10 moves)
