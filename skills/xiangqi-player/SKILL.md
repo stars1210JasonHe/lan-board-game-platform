@@ -59,45 +59,7 @@ Uppercase = Red, lowercase = Black.
 - Control the center (column e)
 - Don't move King in the opening
 - Don't send a lone piece deep into enemy territory
-
-## Classic Red Openings (pick one)
-
-### 中炮 (Center Cannon) — most popular, ~70% of games
-1. C2=5 (炮二平五, cannon to center, threatens center pawn)
-2. H2+3 (马二进三, develop right horse)
-3. R1=2 (车一平二, develop right chariot)
-
-### 三步虎 (Three Step Tiger) — fastest chariot development
-1. C2=5 (center cannon)
-2. H2+3 (right horse to center)
-3. R1=2 (chariot out)
-
-### 飞相 (Elephant Opening) — solid, defensive
-1. E3+5 (相三进五, connect elephants, protect king)
-2. H2+3 (develop horse)
-3. R1=2 (chariot out)
-
-### 仙人指路 (Pawn Opening) — flexible, probing
-1. P7+1 (兵七进一, advance 7th pawn)
-2. H2+3 (develop horse, pawn clears the way)
-3. R1=2 (chariot out)
-
-## Classic Black Responses
-
-### 屏风马 (Screen Horse Defense) — most popular defense
-1. H8+7 (jump left horse toward center)
-2. H2+3 (jump right horse toward center, both horses screen center pawn)
-
-### 反宫马 (Fan Gong Ma) — modern, solid
-1. H8+7 (left horse to center)
-2. C8=9 (cannon to corner)
-3. H2+3 (right horse)
-
-### 顺手炮 (Same Direction Cannon)
-1. C8=5 (mirror Red's center cannon, same direction)
-
-### 列手炮 (Opposite Direction Cannon)
-1. C2=5 (cannon opposite direction to Red's)
+- See openings.md for specific opening lines
 
 ## Middlegame
 
