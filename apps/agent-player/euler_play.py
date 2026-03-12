@@ -668,8 +668,6 @@ async def main():
         illegal_retries = 0   # retry counter for rejected moves
         # FEAT-3: position loop detection
         position_history = {}  # fen/board-hash -> count
-        # P1.2: move history for LLM context
-        move_history = []  # list of SAN/coordinate moves played so far
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
@@ -708,10 +706,6 @@ async def main():
                 cmd += ["--fen", gs["fen"]]
             if ai_model:
                 cmd += ["--model", ai_model]
-            # P1.2: pass recent move history (last 10 moves)
-            if move_history:
-                recent = move_history[-10:]
-                cmd += ["--history", json.dumps(recent)]
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -918,8 +912,6 @@ async def main():
                 sides = msg.get("sides", {})
                 my_side = sides.get(my_id)
                 game_state = msg.get("gameState")
-                move_history = []  # reset history for new match
-                position_history = {}  # reset position tracking too
                 print(f"🎮 Match started! I am: {my_side} (mode={mode})")
 
                 if game_state and is_my_turn(game_state):
@@ -929,11 +921,6 @@ async def main():
             elif t == "move":
                 illegal_retries = 0  # reset on any successful move (ours or opponent's)
                 game_state = msg.get("gameState", game_state)
-                # P1.2: track move history
-                if game_state:
-                    last_move = game_state.get("lastMove")
-                    if last_move:
-                        move_history.append(last_move)
                 # FEAT-3: track positions for loop detection
                 if game_state:
                     pos_key = game_state.get('fen', '') or str(game_state.get('board', ''))
@@ -977,7 +964,6 @@ async def main():
                 last_move_count = -1
                 ready_sent = False
                 game_state = None
-                move_history = []
                 print("🔄 Match ended, waiting for human to start next match...")
 
             elif t == "chat":
