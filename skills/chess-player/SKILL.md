@@ -15,25 +15,35 @@ Q=9, R=5, B=3, N=3, P=1.
 
 1. Checkmate — always play it
 2. Escape check — mandatory
-3. Capture hanging/higher-value pieces
-4. Develop knights and bishops (before move 10)
-5. Control center (e4, d4, e5, d5)
-6. Castle early for King safety
-7. Connect rooks — clear back rank
-8. Create threats — forks, pins, discovered attacks
-9. Don't hang pieces
-10. NEVER sacrifice material just for check — only check if it leads to checkmate, wins material, or gains a decisive positional advantage
-11. Before playing a check, count: will you LOSE more material than you gain? If yes, don't check
+3. Capture hanging/higher-value pieces (trade up: give B/N for R/Q)
+4. NEVER sacrifice material just for check — only check if it leads to checkmate, wins material, or gains a decisive advantage
+5. Before playing a check, count: will you LOSE more material than you gain? If yes, don't check
+6. NEVER repeat the same move — pick a different one each time
+7. Don't hang pieces — before every move, ask: can opponent capture this piece for free?
 
-## Opening Principles
+## Opening (moves 1-10)
 
 - Control center with e4/d4
 - Knights before bishops
 - Castle before move 10
-- Don't repeat moves without reason
 - Don't bring queen out early
+- Don't move the same piece twice without reason
 
-For common opening lines, see `references/openings.md`.
+## Middlegame (moves 10-30)
+
+- Trade pieces when ahead in material; avoid trades when behind
+- Create threats: forks, pins, skewers, discovered attacks
+- Connect rooks — clear back rank
+- Control open files with rooks
+- Avoid pawn weaknesses (doubled, isolated, backward)
+
+## Endgame (moves 30+)
+
+- Activate the King — move it to center
+- Push passed pawns toward promotion
+- Rook belongs behind passed pawns (yours or opponent's)
+- K+Q vs K: drive King to edge, then checkmate
+- K+R vs K: drive King to edge with opposition
 
 ## Output
 

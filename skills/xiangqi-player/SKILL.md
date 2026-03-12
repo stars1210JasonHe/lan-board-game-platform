@@ -44,17 +44,36 @@ Uppercase = Red, lowercase = Black.
 
 1. Checkmate — always play it
 2. Escape check — mandatory
-3. Capture high-value pieces (especially 車)
-4. Develop 馬 and 炮 to active squares
-5. Control center file (column e)
-6. Keep 仕 and 象 formation intact for King safety
-7. Push pawns across river (they gain sideways movement)
-8. Connect 車s on open files
-9. NEVER sacrifice material just for check — only check if it leads to checkmate, wins material, or gains a decisive advantage
-10. Before playing a check, count: will you LOSE more material than you gain? If yes, don't check
-11. NEVER repeat the same move — if you played a move recently, pick a different one
+3. Capture high-value pieces (trade up: give 馬/炮 for 車)
+4. NEVER sacrifice material just for check — only check if it leads to checkmate, wins material, or gains a decisive advantage
+5. Before playing a check, count: will you LOSE more material than you gain? If yes, don't check
+6. NEVER repeat the same move — pick a different one each time
+7. Don't hang pieces — before every move, ask: can opponent capture this piece for free?
+8. Remember: Kings (帥/將) cannot face each other on the same file with nothing between them
 
-For opening lines, see `references/openings.md`.
+## Opening
+
+- 中炮 (center cannon): C on column e attacks opponent center
+- 飞相/起馬: develop elephant or knight first for defense
+- Develop 車 to open files early — 車 is the strongest piece
+- Don't move the same piece twice without reason
+
+## Middlegame
+
+- 車 controls open files; double 車 on same file is powerful
+- 炮 needs a platform piece to capture — position pieces as cannon mounts
+- 馬 is strong in close combat but weak from far; bring 馬 to center
+- Trade pieces when ahead in material; avoid trades when behind
+- Attack the palace: target 仕/象 to expose the King
+- Common tactics: 重炮 (double cannon on same file), 馬後炮 (knight + cannon combo), 闷宫 (smothered mate)
+
+## Endgame
+
+- 單車必勝 (single 車 beats lone King with proper technique)
+- 車 + 兵 vs 仕象全 is usually winning
+- 炮需要架 — cannon alone is weak in endgame without platform pieces
+- Push pawns across river — they gain sideways movement and become more dangerous
+- King should stay protected; only expose for final checkmate sequence
 
 ## Output
 
