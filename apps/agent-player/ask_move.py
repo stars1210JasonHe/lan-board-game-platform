@@ -55,7 +55,7 @@ def render_board(game: str, board: list, side: str) -> str:
     """Render the board visually for the LLM prompt."""
     lines = [f"Game: {game} | You are playing as: {side}", ""]
     if game == "xiangqi":
-        lines.append("     0 1 2 3 4 5 6 7 8")
+        lines.append("     a b c d e f g h i")
         lines.append("    ╔═════════════════╗")
         for i, row in enumerate(board):
             pieces = " ".join(ch if ch != " " else "·" for ch in row)
@@ -164,8 +164,10 @@ def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
     board, side = fen_to_board(fen)
     opp = BLACK if side == RED else RED
 
+    col_letters = "abcdefghi"
     mc = move_coords.split(',')
     fr, fc, tr, tc = int(mc[0]), int(mc[1]), int(mc[2]), int(mc[3])
+    move_str = f"{col_letters[fc]}{fr}{col_letters[tc]}{tr}"
     board = copy_board(board)
     apply_move(board, fr, fc, tr, tc)
 
@@ -179,7 +181,8 @@ def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
                 continue
             if get_attackers(board, r, c, opp) and not is_defended(board, r, c, side):
                 name = PIECE_NAMES.get(p.lower(), 'piece')
-                return f"Your move hangs your {name}"
+                pos_str = f"{col_letters[c]}{r}"
+                return f"Your move {move_str} hangs your {name} on {pos_str}"
     return None
 
 
@@ -219,14 +222,33 @@ def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
             f"Example: Nf3\n"
             f"No explanation — just the move."
         )
+    elif game == "xiangqi":
+        # Xiangqi: letter+number coordinate format (col a-i, row 0-9)
+        col_letters = "abcdefghi"
+        moves_str = ", ".join(
+            f"{col_letters[m['fromCol']]}{m['fromRow']}{col_letters[m['toCol']]}{m['toRow']}"
+            for m in legal_moves
+        )
+        extra = ""
+        if fen:
+            extra += f"\nFEN: {fen}"
+        if attack_info:
+            extra += f"\n{attack_info}"
+        return (
+            f"{board_str}\n\n"
+            f"Legal moves: [{moves_str}]"
+            f"{extra}\n\n"
+            f"Pick the BEST move. Reply with ONLY the coordinate like b0c2\n"
+            f"Format: {{fromCol}}{{fromRow}}{{toCol}}{{toRow}} where columns are a-i and rows are 0-9\n"
+            f"Example: b0c2\n"
+            f"No explanation — just the move."
+        )
     else:
-        # Xiangqi / fallback: coordinate format
+        # Fallback: coordinate format
         moves_str = ", ".join(
             f"{m['fromRow']},{m['fromCol']},{m['toRow']},{m['toCol']}" for m in legal_moves
         )
         extra = ""
-        if game == "xiangqi" and fen:
-            extra += f"\nFEN: {fen}"
         if attack_info:
             extra += f"\n{attack_info}"
         return (
@@ -255,7 +277,19 @@ def parse_move(text: str, legal_moves: list, fen: str | None = None,
         # Chess SAN mode: parse SAN and convert to coordinates
         return _parse_chess_san(text, fen, san_moves)
 
-    # Coordinate mode (xiangqi / chess fallback)
+    # Xiangqi coordinate mode: 4-char string like 'h2e2' (col_letter + row + col_letter + row)
+    coord_match = re.search(r"\b([a-i])(\d)([a-i])(\d)\b", text)
+    if coord_match:
+        col_map = {c: i for i, c in enumerate("abcdefghi")}
+        fc = col_map[coord_match.group(1)]
+        fr = int(coord_match.group(2))
+        tc = col_map[coord_match.group(3)]
+        tr = int(coord_match.group(4))
+        for m in legal_moves:
+            if m["fromRow"] == fr and m["fromCol"] == fc and m["toRow"] == tr and m["toCol"] == tc:
+                return f"{fr},{fc},{tr},{tc}"
+
+    # Fallback: numeric coordinate mode (row,col,row,col)
     match = re.search(r"(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)", text)
     if not match:
         return None
