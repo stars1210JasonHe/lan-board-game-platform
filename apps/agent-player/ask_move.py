@@ -19,14 +19,15 @@ DEFAULT_MODELS = {
 
 
 def load_system_prompt(game: str) -> str:
-    """Load SKILL.md for the given game from skills/{game}-player/SKILL.md."""
+    """Load SKILL.md + references/*.md for the given game."""
     game_skill_map = {
         "chess": "chess-player",
         "xiangqi": "xiangqi-player",
         "gomoku": "gomoku-player",
     }
     skill_name = game_skill_map.get(game, f"{game}-player")
-    skill_path = os.path.join(SKILLS_DIR, skill_name, "SKILL.md")
+    skill_dir = os.path.join(SKILLS_DIR, skill_name)
+    skill_path = os.path.join(skill_dir, "SKILL.md")
     try:
         with open(skill_path, "r") as f:
             text = f.read()
@@ -35,9 +36,19 @@ def load_system_prompt(game: str) -> str:
             end = text.find("---", 3)
             if end != -1:
                 text = text[end + 3:].strip()
-        return text
     except FileNotFoundError:
         return f"You are an expert {game} player."
+    # Load references/*.md
+    refs_dir = os.path.join(skill_dir, "references")
+    if os.path.isdir(refs_dir):
+        for fname in sorted(os.listdir(refs_dir)):
+            if fname.endswith(".md"):
+                try:
+                    with open(os.path.join(refs_dir, fname), "r") as f:
+                        text += "\n\n" + f.read()
+                except Exception:
+                    pass
+    return text
 
 
 def render_board(game: str, board: list, side: str) -> str:
