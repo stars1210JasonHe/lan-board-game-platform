@@ -445,7 +445,7 @@ def main():
     board = data.get("board", [])
     legal_moves = data.get("legalMoves", [])
 
-    if not legal_moves and args.game != "gomoku":
+    if not legal_moves and args.game != "gomoku" and not (args.game == "chess" and args.fen):
         print('resign')
         sys.exit(0)
 
