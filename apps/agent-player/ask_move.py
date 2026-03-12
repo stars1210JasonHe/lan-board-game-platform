@@ -210,44 +210,6 @@ def check_blunder_chess(fen: str, uci_move: str) -> str | None:
     return None
 
 
-def _apply_xiangqi_move(fen: str, move_coords: str) -> str:
-    """Apply a xiangqi move to a FEN string, return new FEN with switched side."""
-    parts = fen.split()
-    board_fen = parts[0]
-    side = parts[1]
-    rows = board_fen.split('/')
-    board = []
-    for row_str in rows:
-        cells = []
-        for ch in row_str:
-            if ch.isdigit():
-                cells.extend([''] * int(ch))
-            else:
-                cells.append(ch)
-        board.append(cells)
-    mc = move_coords.split(',')
-    fr, fc, tr, tc = int(mc[0]), int(mc[1]), int(mc[2]), int(mc[3])
-    board[tr][tc] = board[fr][fc]
-    board[fr][fc] = ''
-    fen_rows = []
-    for row in board:
-        fen_row = ''
-        empty = 0
-        for cell in row:
-            if cell == '':
-                empty += 1
-            else:
-                if empty > 0:
-                    fen_row += str(empty)
-                    empty = 0
-                fen_row += cell
-        if empty > 0:
-            fen_row += str(empty)
-        fen_rows.append(fen_row)
-    new_side = 'b' if side == 'w' else 'w'
-    return f"{'/'.join(fen_rows)} {new_side}"
-
-
 def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
     """Check if a xiangqi move hangs a piece worth >= 3 (Horse=4, Cannon=4.5, Chariot=9).
     Returns description string if blunder found, None otherwise."""
@@ -257,14 +219,17 @@ def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
                    'b': 'Elephant', 'a': 'Advisor', 'p': 'Pawn', 'k': 'King'}
 
     fen_parts = fen.split()
-    our_side_char = fen_parts[1]
-    new_fen = _apply_xiangqi_move(fen, move_coords)
-    new_parts = new_fen.split()
-    short_fen = f"{new_parts[0]} {new_parts[1]}"
+    short_fen = f"{fen_parts[0]} {fen_parts[1]}"
     board = cchess.ChessBoard(short_fen)
 
-    our_color = cchess.RED if our_side_char == 'w' else cchess.BLACK
+    our_color = cchess.RED if fen_parts[1] == 'w' else cchess.BLACK
     opp_color = cchess.BLACK if our_color == cchess.RED else cchess.RED
+
+    # Parse move_coords "fr,fc,tr,tc" (board space: row 0 = Red's back rank)
+    mc = move_coords.split(',')
+    fr, fc, tr, tc = int(mc[0]), int(mc[1]), int(mc[2]), int(mc[3])
+    # cchess coords: x=col, y=row (y=0 = Red's back rank = board row 0)
+    board.move((fc, fr), (tc, tr))
 
     for our_piece in board.get_pieces(our_color):
         sq = (our_piece.x, our_piece.y)
@@ -276,7 +241,6 @@ def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
                 target_p = board.get_piece(sq)
                 if target_p and target_p.color == opp_piece.color:
                     continue
-                # Is our piece defended?
                 defended = False
                 for defender in board.get_pieces(our_color):
                     if (defender.x, defender.y) != sq and defender.is_valid_move(sq):
