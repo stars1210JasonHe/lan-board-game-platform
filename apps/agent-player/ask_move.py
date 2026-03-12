@@ -176,8 +176,8 @@ def parse_move(text: str, legal_moves: list, fen: str | None = None,
     For xiangqi: parses coordinate format (digits,digits,digits,digits).
     Returns 'resign' if LLM wants to resign.
     """
-    # Check for resignation
-    if text and 'resign' in text.strip().lower():
+    # Check for resignation — only if LLM replies with just "resign"
+    if text and text.strip().lower() in ('resign', 'i resign', 'resign.'):
         return 'resign'
 
     if fen and san_moves:
