@@ -546,7 +546,39 @@ def xiangqi_legal_moves(board_rows, side):
 
 def xiangqi_move(board_rows, side):
     """Pick a random xiangqi move, preferring captures."""
-    moves = xiangqi_legal_moves(board_rows, side)
+    return choose_xiangqi_move(board_rows, side)
+
+
+def parse_xiangqi_coord(coord):
+    """Convert a coord like e7c8 to a move dict."""
+    if not isinstance(coord, str) or len(coord) != 4:
+        return None
+    if coord[0] not in "abcdefghi" or coord[2] not in "abcdefghi":
+        return None
+    if not coord[1].isdigit() or not coord[3].isdigit():
+        return None
+    return {
+        "fromRow": int(coord[1]),
+        "fromCol": ord(coord[0]) - ord('a'),
+        "toRow": int(coord[3]),
+        "toCol": ord(coord[2]) - ord('a'),
+    }
+
+
+def xiangqi_server_legal_moves(gs):
+    """Prefer the server's fully legal xiangqi move list when available."""
+    legal_coords = gs.get("legalMovesCoord", []) if gs else []
+    moves = []
+    for coord in legal_coords:
+        move = parse_xiangqi_coord(coord)
+        if move:
+            moves.append(move)
+    return moves
+
+
+def choose_xiangqi_move(board_rows, side, legal_moves=None):
+    """Pick a xiangqi move, preferring captures from a fully legal move list."""
+    moves = legal_moves if legal_moves is not None else xiangqi_legal_moves(board_rows, side)
     if not moves:
         return None
     board = [list(row) for row in board_rows]
@@ -696,7 +728,9 @@ async def main():
             board = gs.get("board", [])
 
             if gt == "xiangqi":
-                legal = xiangqi_legal_moves(board, side)
+                legal = xiangqi_server_legal_moves(gs)
+                if not legal:
+                    legal = xiangqi_legal_moves(board, side)
                 if not legal:
                     return None
                 board_json = json.dumps({"board": board, "legalMoves": legal})
@@ -823,7 +857,10 @@ async def main():
                     return None, False
                 return chess_move(legal), True
             elif gt == "xiangqi":
-                return xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red")), True
+                legal = xiangqi_server_legal_moves(gs)
+                if legal:
+                    return choose_xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red"), legal), True
+                return choose_xiangqi_move(gs.get("board", []), gs.get("currentPlayer", "red")), True
             return None, False
 
         def is_my_turn(gs):
@@ -882,7 +919,8 @@ async def main():
                             local_move = None
                             try:
                                 if gt == 'xiangqi':
-                                    local_move = xiangqi_move(game_state.get('board', []), game_state.get('currentPlayer', 'red'))
+                                    legal = xiangqi_server_legal_moves(game_state)
+                                    local_move = choose_xiangqi_move(game_state.get('board', []), game_state.get('currentPlayer', 'red'), legal if legal else None)
                                 elif gt == 'chess':
                                     legal = game_state.get('legalMoves', [])
                                     if legal:

@@ -781,13 +781,19 @@ function spawnEulerAgent(roomId: string, difficulty: string) {
 
   // Pass API key into subprocess env
   const childEnv = { ...process.env };
+  childEnv.PYTHONUTF8 = childEnv.PYTHONUTF8 || '1';
+  childEnv.PYTHONIOENCODING = childEnv.PYTHONIOENCODING || 'utf-8';
   if (process.env.AI_API_KEY) {
     childEnv.OPENROUTER_API_KEY = process.env.AI_API_KEY;
     childEnv.ANTHROPIC_API_KEY  = process.env.AI_API_KEY;
     childEnv.OPENAI_API_KEY     = process.env.AI_API_KEY;
   }
 
-  const proc = spawn('python3', args, {
+  const launcher = process.platform === 'win32' ? 'uv' : 'python3';
+  const launcherArgs = process.platform === 'win32'
+    ? ['run', '--with', 'websockets', '--with', 'chess', 'python', ...args]
+    : args;
+  const proc = spawn(launcher, launcherArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: join(__dirname, '..', '..', 'agent-player'),
     env: childEnv,
