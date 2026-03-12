@@ -689,21 +689,9 @@ async def main():
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
 
-        session_epoch = 0    # rotate session every N moves to limit history
-        session_move_count = 0
-        SESSION_ROTATE_EVERY = 8  # reset session after this many moves
-
         async def _llm_move(gs, gt):
             """Call ask_move.py as subprocess for LLM-based move."""
-            nonlocal move_first_call, session_epoch, session_move_count, move_session_id
-            # Rotate session to prevent history bloat
-            session_move_count += 1
-            if session_move_count > SESSION_ROTATE_EVERY and ai_engine == "openclaw":
-                session_epoch += 1
-                move_session_id = f"game-move-{room_id.lower()}-e{session_epoch}"
-                move_first_call = True
-                session_move_count = 1
-                print(f"🔄 Session rotated to {move_session_id}")
+            nonlocal move_first_call
             side = my_side or gs.get("currentPlayer", "")
             board = gs.get("board", [])
 
