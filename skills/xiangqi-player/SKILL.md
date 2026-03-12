@@ -50,6 +50,9 @@ Uppercase = Red, lowercase = Black.
 6. Keep 仕 and 象 formation intact for King safety
 7. Push pawns across river (they gain sideways movement)
 8. Connect 車s on open files
+9. NEVER sacrifice material just for check — only check if it leads to checkmate, wins material, or gains a decisive advantage
+10. Before playing a check, count: will you LOSE more material than you gain? If yes, don't check
+11. NEVER repeat the same move — if you played a move recently, pick a different one
 
 For opening lines, see `references/openings.md`.
 
