@@ -739,7 +739,7 @@ async def main():
                 cmd += ["--history-file", move_history_file]
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
-                    None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=180)
                 )
                 line = result.stdout.strip()
                 if line == 'resign':
