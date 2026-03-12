@@ -135,26 +135,191 @@ def xiangqi_attacked_pieces_info(fen: str) -> str:
     return "\n".join(lines)
 
 
+def chess_attacked_pieces_info(fen: str) -> str:
+    """Analyze which pieces are under attack for chess using python-chess."""
+    import chess
+    board = chess.Board(fen)
+    side = board.turn
+    opp = not side
+
+    PIECE_NAMES = {
+        chess.PAWN: "Pawn", chess.KNIGHT: "Knight", chess.BISHOP: "Bishop",
+        chess.ROOK: "Rook", chess.QUEEN: "Queen", chess.KING: "King",
+    }
+
+    our_attacked = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece and piece.color == side and board.is_attacked_by(opp, sq):
+            attackers = board.attackers(opp, sq)
+            att_names = []
+            for att_sq in attackers:
+                att_piece = board.piece_at(att_sq)
+                if att_piece:
+                    att_names.append(PIECE_NAMES.get(att_piece.piece_type, "piece").lower())
+            sq_name = chess.square_name(sq)
+            piece_name = PIECE_NAMES.get(piece.piece_type, "piece")
+            att_str = ", ".join(att_names) if att_names else "opponent"
+            our_attacked.append(f"{piece_name} on {sq_name} (by {att_str})")
+
+    opp_capturable = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece and piece.color == opp and board.is_attacked_by(side, sq):
+            sq_name = chess.square_name(sq)
+            piece_name = PIECE_NAMES.get(piece.piece_type, "piece")
+            defended = board.is_attacked_by(opp, sq)
+            defense_str = "defended" if defended else "undefended"
+            opp_capturable.append(f"{piece_name} on {sq_name} ({defense_str})")
+
+    lines = []
+    if our_attacked:
+        lines.append(f"Your pieces under attack: {', '.join(our_attacked)}")
+    if opp_capturable:
+        lines.append(f"Opponent pieces you can capture: {', '.join(opp_capturable)}")
+    return "\n".join(lines)
+
+
+def check_blunder_chess(fen: str, uci_move: str) -> str | None:
+    """Check if a chess move hangs a piece worth >= 3.
+    Returns description string if blunder found, None otherwise."""
+    import chess
+    PIECE_VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3,
+                    chess.ROOK: 5, chess.QUEEN: 9, chess.KING: 0}
+    board = chess.Board(fen)
+    move = chess.Move.from_uci(uci_move)
+    board.push(move)
+
+    # Now it's opponent's turn. Check all opponent legal moves.
+    for opp_move in board.legal_moves:
+        captured = board.piece_at(opp_move.to_square)
+        if captured and captured.color == (not board.turn):
+            # This is our piece being captured
+            cap_value = PIECE_VALUES.get(captured.piece_type, 0)
+            if cap_value >= 3:
+                # After opponent captures, can we recapture?
+                board.push(opp_move)
+                can_recapture = any(
+                    m.to_square == opp_move.to_square for m in board.legal_moves
+                )
+                board.pop()
+                if not can_recapture:
+                    piece_name = chess.piece_name(captured.piece_type).title()
+                    san = chess.Board(fen).san(move)
+                    return f"Your move {san} hangs your {piece_name}"
+    return None
+
+
+def _apply_xiangqi_move(fen: str, move_coords: str) -> str:
+    """Apply a xiangqi move to a FEN string, return new FEN with switched side."""
+    parts = fen.split()
+    board_fen = parts[0]
+    side = parts[1]
+    rows = board_fen.split('/')
+    board = []
+    for row_str in rows:
+        cells = []
+        for ch in row_str:
+            if ch.isdigit():
+                cells.extend([''] * int(ch))
+            else:
+                cells.append(ch)
+        board.append(cells)
+    mc = move_coords.split(',')
+    fr, fc, tr, tc = int(mc[0]), int(mc[1]), int(mc[2]), int(mc[3])
+    board[tr][tc] = board[fr][fc]
+    board[fr][fc] = ''
+    fen_rows = []
+    for row in board:
+        fen_row = ''
+        empty = 0
+        for cell in row:
+            if cell == '':
+                empty += 1
+            else:
+                if empty > 0:
+                    fen_row += str(empty)
+                    empty = 0
+                fen_row += cell
+        if empty > 0:
+            fen_row += str(empty)
+        fen_rows.append(fen_row)
+    new_side = 'b' if side == 'w' else 'w'
+    return f"{'/'.join(fen_rows)} {new_side}"
+
+
+def check_blunder_xiangqi(fen: str, move_coords: str) -> str | None:
+    """Check if a xiangqi move hangs a piece worth >= 3 (Horse=4, Cannon=4.5, Chariot=9).
+    Returns description string if blunder found, None otherwise."""
+    import cchess
+    PIECE_VALUES = {'r': 9, 'c': 4.5, 'n': 4, 'b': 2, 'a': 2, 'p': 1, 'k': 0}
+    PIECE_NAMES = {'r': 'Chariot', 'c': 'Cannon', 'n': 'Horse',
+                   'b': 'Elephant', 'a': 'Advisor', 'p': 'Pawn', 'k': 'King'}
+
+    fen_parts = fen.split()
+    our_side_char = fen_parts[1]
+    new_fen = _apply_xiangqi_move(fen, move_coords)
+    new_parts = new_fen.split()
+    short_fen = f"{new_parts[0]} {new_parts[1]}"
+    board = cchess.ChessBoard(short_fen)
+
+    our_color = cchess.RED if our_side_char == 'w' else cchess.BLACK
+    opp_color = cchess.BLACK if our_color == cchess.RED else cchess.RED
+
+    for our_piece in board.get_pieces(our_color):
+        sq = (our_piece.x, our_piece.y)
+        val = PIECE_VALUES.get(our_piece.species, 0)
+        if val < 3:
+            continue
+        for opp_piece in board.get_pieces(opp_color):
+            if opp_piece.is_valid_move(sq):
+                target_p = board.get_piece(sq)
+                if target_p and target_p.color == opp_piece.color:
+                    continue
+                # Is our piece defended?
+                defended = False
+                for defender in board.get_pieces(our_color):
+                    if (defender.x, defender.y) != sq and defender.is_valid_move(sq):
+                        defended = True
+                        break
+                if not defended:
+                    name = PIECE_NAMES.get(our_piece.species, 'piece')
+                    return f"Your move hangs your {name}"
+    return None
+
+
 def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
-                      fen: str | None = None, san_moves: list | None = None) -> str:
+                      fen: str | None = None, san_moves: list | None = None,
+                      pgn: str | None = None) -> str:
     """Build the user prompt with board + legal moves + tactical info."""
     board_str = render_board(game, board, side)
 
-    # Attacked pieces info for xiangqi
+    # Attacked pieces info
     attack_info = ""
     if game == "xiangqi" and fen:
         try:
             attack_info = xiangqi_attacked_pieces_info(fen)
         except Exception as e:
             print(f"[ask_move] xiangqi attack info error: {e}", file=sys.stderr)
+    elif game == "chess" and fen:
+        try:
+            attack_info = chess_attacked_pieces_info(fen)
+        except Exception as e:
+            print(f"[ask_move] chess attack info error: {e}", file=sys.stderr)
 
     if game == "chess" and san_moves:
         # Chess with SAN: show FEN and SAN legal moves
         moves_str = ", ".join(san_moves)
+        extra = ""
+        if pgn:
+            extra += f"\nGame so far: {pgn}"
+        if attack_info:
+            extra += f"\n{attack_info}"
         return (
             f"{board_str}\n\n"
             f"FEN: {fen}\n"
-            f"Legal moves (SAN): [{moves_str}]\n\n"
+            f"Legal moves (SAN): [{moves_str}]"
+            f"{extra}\n\n"
             f"Pick the BEST move. Reply with ONLY the SAN notation.\n"
             f"Example: Nf3\n"
             f"No explanation — just the move."
@@ -450,6 +615,7 @@ def main():
     parser.add_argument("--session-id", default=None, help="Reuse OpenClaw session for context")
     parser.add_argument("--skip-system", action="store_true", help="Skip system prompt (already sent)")
     parser.add_argument("--history-file", default=None, help="JSON file for conversation history reuse")
+    parser.add_argument("--pgn", default=None, help="PGN move history for chess")
     args = parser.parse_args()
 
     data = json.loads(args.board_json)
@@ -472,7 +638,8 @@ def main():
 
     system_prompt = load_system_prompt(args.game)
     user_prompt = build_user_prompt(args.game, board, args.side, legal_moves,
-                                    fen=args.fen, san_moves=san_moves)
+                                    fen=args.fen, san_moves=san_moves,
+                                    pgn=args.pgn)
 
     engine_fn = ENGINES[args.engine]
 
@@ -513,8 +680,55 @@ def main():
     if response:
         move = parse_move(response, legal_moves, fen=args.fen, san_moves=san_moves)
         if move:
-            print(move)
-            return
+            # Anti-blunder verification (chess + xiangqi, max 2 retries)
+            MAX_BLUNDER_RETRIES = 2
+            blunder_retries = 0
+            candidate_move = move
+            candidate_response = response
+
+            while candidate_move and candidate_move != 'resign' and blunder_retries < MAX_BLUNDER_RETRIES:
+                blunder_msg = None
+                try:
+                    if args.game == "chess" and args.fen:
+                        parts = candidate_move.split(",")
+                        uci = (chr(ord('a') + int(parts[1])) + str(8 - int(parts[0])) +
+                               chr(ord('a') + int(parts[3])) + str(8 - int(parts[2])))
+                        blunder_msg = check_blunder_chess(args.fen, uci)
+                    elif args.game == "xiangqi" and args.fen:
+                        blunder_msg = check_blunder_xiangqi(args.fen, candidate_move)
+                except Exception as e:
+                    print(f"[ask_move] blunder check error: {e}", file=sys.stderr)
+                    break
+
+                if not blunder_msg:
+                    break  # Move is safe
+
+                blunder_retries += 1
+                print(f"[ask_move] Blunder detected (retry {blunder_retries}): {blunder_msg}", file=sys.stderr)
+                feedback = f"{blunder_msg}. Pick a different move."
+
+                # Re-call engine with feedback
+                response2 = None
+                if args.engine == "openclaw":
+                    response2 = call_openclaw(system_prompt, feedback, args.model, args.timeout,
+                                              session_id=args.session_id, skip_system=True)
+                else:
+                    messages = [
+                        {"role": "user", "content": user_prompt},
+                        {"role": "assistant", "content": candidate_response},
+                        {"role": "user", "content": feedback},
+                    ]
+                    response2 = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
+                                          messages=messages)
+                if response2:
+                    candidate_response = response2
+                    candidate_move = parse_move(response2, legal_moves, fen=args.fen, san_moves=san_moves)
+                else:
+                    break  # Engine failed, accept current move
+
+            if candidate_move:
+                print(candidate_move)
+                return
 
     # Fallback: random legal move
     print(f"[ask_move] Falling back to random move", file=sys.stderr)

@@ -420,6 +420,18 @@ def gomoku_move(board, size, player):
     return {"row": center, "col": center}
 
 
+def _format_pgn(moves):
+    """Format SAN moves list as PGN string: '1. e4 e5 2. Nf3 Nc6 ...'"""
+    parts = []
+    for i in range(0, len(moves), 2):
+        num = i // 2 + 1
+        parts.append(f"{num}.")
+        parts.append(moves[i])
+        if i + 1 < len(moves):
+            parts.append(moves[i + 1])
+    return " ".join(parts)
+
+
 # ── Chess AI (local fallback) ─────────────────────────────────────────────────
 
 def chess_move(legal_moves):
@@ -670,6 +682,9 @@ async def main():
         position_history = {}  # fen/board-hash -> count
         # History file for non-openclaw LLM context reuse
         move_history_file = None
+        # PGN tracking for chess
+        pgn_board = None   # chess.Board tracking game state for SAN conversion
+        pgn_moves = []     # SAN moves list
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
@@ -710,6 +725,8 @@ async def main():
             elif gt == "xiangqi":
                 xiangqi_fen = xiangqi_board_to_fen(board, gs.get("currentPlayer", side))
                 cmd += ["--fen", xiangqi_fen]
+            if gt == "chess" and pgn_moves:
+                cmd += ["--pgn", _format_pgn(pgn_moves)]
             if ai_model:
                 cmd += ["--model", ai_model]
             # Reuse session for context continuity (SKILL.md sent only on first call)
@@ -938,6 +955,14 @@ async def main():
                     os.remove(move_history_file)
                 except FileNotFoundError:
                     pass
+                # PGN tracking for chess
+                if game_type == "chess":
+                    import chess as _chess
+                    pgn_board = _chess.Board()
+                    pgn_moves = []
+                else:
+                    pgn_board = None
+                    pgn_moves = []
                 print(f"🎮 Match started! I am: {my_side} (mode={mode})")
 
                 if game_state and is_my_turn(game_state):
@@ -946,6 +971,18 @@ async def main():
 
             elif t == "move":
                 illegal_retries = 0  # reset on any successful move (ours or opponent's)
+                # PGN tracking for chess — convert UCI to SAN before updating game_state
+                if game_type == "chess" and pgn_board is not None:
+                    try:
+                        move_data = msg.get("move", {})
+                        last_uci = move_data.get("uci") if isinstance(move_data, dict) else None
+                        if last_uci:
+                            import chess as _chess
+                            m = _chess.Move.from_uci(last_uci)
+                            pgn_moves.append(pgn_board.san(m))
+                            pgn_board.push(m)
+                    except Exception as e:
+                        print(f"[pgn] SAN conversion failed: {e}")
                 game_state = msg.get("gameState", game_state)
                 # FEAT-3: track positions for loop detection
                 if game_state:
@@ -997,6 +1034,8 @@ async def main():
                 last_move_count = -1
                 ready_sent = False
                 game_state = None
+                pgn_board = None
+                pgn_moves = []
                 print("🔄 Match ended, waiting for human to start next match...")
 
             elif t == "chat":
