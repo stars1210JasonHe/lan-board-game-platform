@@ -269,18 +269,20 @@ def call_openclaw(system_prompt: str, user_prompt: str, model: str | None, timeo
         return None
 
 
-def call_anthropic(system_prompt: str, user_prompt: str, model: str | None, timeout: int) -> str | None:
+def call_anthropic(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                   messages: list | None = None) -> str | None:
     """Call Anthropic Messages API directly."""
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("[ask_move] ANTHROPIC_API_KEY not set", file=sys.stderr)
         return None
     model = model or DEFAULT_MODELS["anthropic"]
+    msgs = messages if messages else [{"role": "user", "content": user_prompt}]
     body = json.dumps({
         "model": model,
         "max_tokens": 64,
         "system": system_prompt,
-        "messages": [{"role": "user", "content": user_prompt}],
+        "messages": msgs,
     }).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages",
@@ -319,7 +321,8 @@ def _load_env_key(env_var: str, *secret_files) -> str | None:
 
 _SECRETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".secrets")
 
-def call_openrouter(system_prompt: str, user_prompt: str, model: str | None, timeout: int) -> str | None:
+def call_openrouter(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                    messages: list | None = None) -> str | None:
     """Call OpenRouter API (OpenAI-compatible)."""
     api_key = (_load_env_key("OPENROUTER_API_KEY",
                               os.path.join(_SECRETS_DIR, "minimax.env"),
@@ -331,13 +334,11 @@ def call_openrouter(system_prompt: str, user_prompt: str, model: str | None, tim
         print("[ask_move] OPENROUTER_API_KEY not set", file=sys.stderr)
         return None
     model = model or DEFAULT_MODELS["openrouter"]
+    msgs = messages if messages else [{"role": "user", "content": user_prompt}]
     body = json.dumps({
         "model": model,
         "max_tokens": 64,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": [{"role": "system", "content": system_prompt}] + msgs,
     }).encode()
     req = urllib.request.Request(
         "https://openrouter.ai/api/v1/chat/completions",
@@ -358,7 +359,8 @@ def call_openrouter(system_prompt: str, user_prompt: str, model: str | None, tim
     return None
 
 
-def call_openai(system_prompt: str, user_prompt: str, model: str | None, timeout: int) -> str | None:
+def call_openai(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                messages: list | None = None) -> str | None:
     """Call OpenAI Chat Completions API."""
     api_key = _load_env_key("OPENAI_API_KEY",
                              os.path.join(_SECRETS_DIR, "openai.env"),
@@ -367,13 +369,11 @@ def call_openai(system_prompt: str, user_prompt: str, model: str | None, timeout
         print("[ask_move] OPENAI_API_KEY not set", file=sys.stderr)
         return None
     model = model or DEFAULT_MODELS["openai"]
+    msgs = messages if messages else [{"role": "user", "content": user_prompt}]
     body = json.dumps({
         "model": model,
         "max_tokens": 64,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": [{"role": "system", "content": system_prompt}] + msgs,
     }).encode()
     req = urllib.request.Request(
         "https://api.openai.com/v1/chat/completions",
@@ -394,16 +394,15 @@ def call_openai(system_prompt: str, user_prompt: str, model: str | None, timeout
     return None
 
 
-def call_ollama(system_prompt: str, user_prompt: str, model: str | None, timeout: int) -> str | None:
+def call_ollama(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                messages: list | None = None) -> str | None:
     """Call local Ollama API."""
     model = model or DEFAULT_MODELS["ollama"]
+    msgs = messages if messages else [{"role": "user", "content": user_prompt}]
     body = json.dumps({
         "model": model,
         "stream": False,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
+        "messages": [{"role": "system", "content": system_prompt}] + msgs,
     }).encode()
     req = urllib.request.Request(
         "http://localhost:11434/api/chat",
@@ -439,6 +438,7 @@ def main():
     parser.add_argument("--fen", default=None, help="FEN string for chess SAN resolution")
     parser.add_argument("--session-id", default=None, help="Reuse OpenClaw session for context")
     parser.add_argument("--skip-system", action="store_true", help="Skip system prompt (already sent)")
+    parser.add_argument("--history-file", default=None, help="JSON file for conversation history reuse")
     args = parser.parse_args()
 
     data = json.loads(args.board_json)
@@ -464,11 +464,40 @@ def main():
                                     fen=args.fen, san_moves=san_moves)
 
     engine_fn = ENGINES[args.engine]
+
+    # History file handling for non-openclaw engines
+    use_history = args.history_file and args.engine != "openclaw"
+    history_messages = None
+    if use_history:
+        history_messages = []
+        if os.path.exists(args.history_file):
+            try:
+                with open(args.history_file) as f:
+                    history_messages = json.load(f).get("messages", [])
+            except Exception:
+                history_messages = []
+        history_messages.append({"role": "user", "content": user_prompt})
+        # Trim to last 20 exchanges (40 messages)
+        if len(history_messages) > 40:
+            history_messages = history_messages[-40:]
+
     if args.engine == "openclaw" and (args.session_id or args.skip_system):
         response = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
                              session_id=args.session_id, skip_system=args.skip_system)
+    elif history_messages is not None:
+        response = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
+                             messages=history_messages)
     else:
         response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
+
+    # Save history after successful response
+    if response and use_history:
+        history_messages.append({"role": "assistant", "content": response})
+        try:
+            with open(args.history_file, "w") as f:
+                json.dump({"system": system_prompt, "messages": history_messages}, f)
+        except Exception as e:
+            print(f"[ask_move] history save error: {e}", file=sys.stderr)
 
     if response:
         move = parse_move(response, legal_moves, fen=args.fen, san_moves=san_moves)

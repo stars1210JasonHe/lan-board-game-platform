@@ -668,12 +668,15 @@ async def main():
         illegal_retries = 0   # retry counter for rejected moves
         # FEAT-3: position loop detection
         position_history = {}  # fen/board-hash -> count
+        # History file for non-openclaw LLM context reuse
+        move_history_file = None
 
         # Join room
         await send_ws({"type": "join_room", "roomId": room_id})
 
         async def _llm_move(gs, gt):
             """Call ask_move.py as subprocess for LLM-based move."""
+            nonlocal move_first_call
             side = my_side or gs.get("currentPlayer", "")
             board = gs.get("board", [])
 
@@ -714,6 +717,9 @@ async def main():
                 cmd += ["--session-id", move_session_id]
                 if not move_first_call:
                     cmd += ["--skip-system"]
+            # History file for non-openclaw engines
+            if ai_engine != "openclaw" and move_history_file:
+                cmd += ["--history-file", move_history_file]
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -722,7 +728,6 @@ async def main():
                 if line == 'resign':
                     return {'resign': True}
                 # Mark first call done for session reuse
-                nonlocal move_first_call
                 if move_first_call and line:
                     move_first_call = False
                 parts = line.split(",")
@@ -927,6 +932,12 @@ async def main():
                 # New session ID per match for LLM context reuse
                 move_session_id = f"game-move-{room_id.lower()}"
                 move_first_call = True
+                # History file for non-openclaw engines (clean stale history)
+                move_history_file = f"/tmp/game-move-{room_id.lower()}.json"
+                try:
+                    os.remove(move_history_file)
+                except FileNotFoundError:
+                    pass
                 print(f"🎮 Match started! I am: {my_side} (mode={mode})")
 
                 if game_state and is_my_turn(game_state):
@@ -973,6 +984,13 @@ async def main():
                 else:
                     reply = await event_reply("I lost the game", "lose", ctx, game_type or "")
                 await send_ws({"type": "chat", "text": reply})
+
+                # Clean up history file
+                if move_history_file:
+                    try:
+                        os.remove(move_history_file)
+                    except FileNotFoundError:
+                        pass
 
                 # Stay alive: reset local state, wait for human to click Play Again
                 # The human triggers the room reset via play_again; we just wait for room_state(waiting)
