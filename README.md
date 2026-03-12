@@ -122,14 +122,26 @@ http://<server-ip>:8765
 
 ### LLM AI (Chess & Xiangqi)
 
-The LLM receives the board position, legal moves list, and game-specific strategy from skill files. It picks the best move and can chat about the game.
+The LLM receives rich context for every move decision — not just the board, but tactical analysis to help it play stronger:
+
+| Context given to LLM | Chess | Xiangqi |
+|-----------------------|-------|---------|
+| Board visualization (ASCII) | ✅ | ✅ |
+| FEN position string | ✅ | ✅ |
+| Legal moves list (SAN / coordinate) | ✅ | ✅ |
+| Pieces under attack (with attackers) | ✅ | ✅ |
+| Capturable opponent pieces (defended/undefended) | ✅ | ✅ |
+| Move history (last 10 moves) | ✅ | ✅ |
+| Game-specific strategy (SKILL.md) | ✅ | ✅ |
+| Pre-move safety checklist | ✅ | ✅ |
 
 How it works:
-1. Server loads skill files at startup (`skills/chess-player/`, `skills/xiangqi-player/`)
-2. Each move request sends: skill (system prompt) + board state + legal moves
-3. LLM picks a move from the legal list — no illegal moves possible
-4. 3 retries with error feedback if LLM picks an invalid format
-5. Final fallback: random legal move
+1. Per-game skill files teach strategy, openings, and tactics (`skills/chess-player/`, `skills/xiangqi-player/`)
+2. Each move request sends: skill (system prompt) + board + FEN + legal moves + tactical analysis + history
+3. Attack detection uses `python-chess` (chess) and `cchess` (xiangqi) to identify threats
+4. LLM picks a move from the legal list — no illegal moves possible
+5. 3 retries with error feedback if LLM picks an invalid format
+6. Final fallback: random legal move
 
 ### Local Minimax (Gomoku)
 
