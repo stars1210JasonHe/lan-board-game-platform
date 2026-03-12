@@ -19,7 +19,7 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 import websockets
 
-EULER_NICK = "OpenClaw 🤖"
+EULER_NICK = "Euler ♟️"
 ASK_MOVE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ask_move.py")
 
 # ── Engine config ─────────────────────────────────────────────────────────────
