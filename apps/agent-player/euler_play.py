@@ -706,6 +706,11 @@ async def main():
                 cmd += ["--fen", gs["fen"]]
             if ai_model:
                 cmd += ["--model", ai_model]
+            # Reuse session for context continuity (SKILL.md sent only on first call)
+            if ai_engine == "openclaw" and move_session_id:
+                cmd += ["--session-id", move_session_id]
+                if not move_first_call:
+                    cmd += ["--skip-system"]
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
                     None, lambda: subprocess.run(cmd, capture_output=True, text=True, timeout=60)
@@ -713,6 +718,10 @@ async def main():
                 line = result.stdout.strip()
                 if line == 'resign':
                     return {'resign': True}
+                # Mark first call done for session reuse
+                nonlocal move_first_call
+                if move_first_call and line:
+                    move_first_call = False
                 parts = line.split(",")
                 if gt == "chess" and len(parts) == 4:
                     fr, fc, tr, tc = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
@@ -912,6 +921,9 @@ async def main():
                 sides = msg.get("sides", {})
                 my_side = sides.get(my_id)
                 game_state = msg.get("gameState")
+                # New session ID per match for LLM context reuse
+                move_session_id = f"game-move-{room_id.lower()}"
+                move_first_call = True
                 print(f"🎮 Match started! I am: {my_side} (mode={mode})")
 
                 if game_state and is_my_turn(game_state):

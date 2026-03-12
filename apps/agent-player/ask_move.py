@@ -162,11 +162,13 @@ def random_move(legal_moves: list) -> str:
 
 # ── Engine implementations ────────────────────────────────────────────────────
 
-def call_openclaw(system_prompt: str, user_prompt: str, model: str | None, timeout: int) -> str | None:
-    """Call openclaw gateway with a unique ephemeral session-id (avoids main session lock)."""
-    import uuid
-    session_id = f"game-move-{uuid.uuid4().hex[:8]}"
-    prompt = f"{system_prompt}\n\n{user_prompt}"
+def call_openclaw(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                   session_id: str | None = None, skip_system: bool = False) -> str | None:
+    """Call openclaw gateway. Reuses session_id for context continuity when provided."""
+    if not session_id:
+        import uuid
+        session_id = f"game-move-{uuid.uuid4().hex[:8]}"
+    prompt = user_prompt if skip_system else f"{system_prompt}\n\n{user_prompt}"
     cmd = ["openclaw", "agent", "--session-id", session_id, "--message", prompt, "--json"]
     if model:
         cmd += ["--model", model]
@@ -356,6 +358,8 @@ def main():
     parser.add_argument("--model", default=None)
     parser.add_argument("--timeout", type=int, default=8)
     parser.add_argument("--fen", default=None, help="FEN string for chess SAN resolution")
+    parser.add_argument("--session-id", default=None, help="Reuse OpenClaw session for context")
+    parser.add_argument("--skip-system", action="store_true", help="Skip system prompt (already sent)")
     args = parser.parse_args()
 
     data = json.loads(args.board_json)
@@ -381,7 +385,11 @@ def main():
                                     fen=args.fen, san_moves=san_moves)
 
     engine_fn = ENGINES[args.engine]
-    response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
+    if args.engine == "openclaw" and (args.session_id or args.skip_system):
+        response = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
+                             session_id=args.session_id, skip_system=args.skip_system)
+    else:
+        response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
 
     if response:
         move = parse_move(response, legal_moves, fen=args.fen, san_moves=san_moves)
