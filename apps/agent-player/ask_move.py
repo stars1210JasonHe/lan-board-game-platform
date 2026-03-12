@@ -59,18 +59,107 @@ def render_board(game: str, board: list, side: str) -> str:
     return "\n".join(lines)
 
 
+def chess_attacked_pieces_info(fen: str) -> str:
+    """Analyze which pieces are under attack for chess using python-chess."""
+    import chess
+    board = chess.Board(fen)
+    side = board.turn
+    opp = not side
+
+    PIECE_NAMES = {
+        chess.PAWN: "Pawn", chess.KNIGHT: "Knight", chess.BISHOP: "Bishop",
+        chess.ROOK: "Rook", chess.QUEEN: "Queen", chess.KING: "King",
+    }
+
+    # Our pieces under attack by opponent
+    our_attacked = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece and piece.color == side and board.is_attacked_by(opp, sq):
+            attackers = board.attackers(opp, sq)
+            att_names = []
+            for att_sq in attackers:
+                att_piece = board.piece_at(att_sq)
+                if att_piece:
+                    att_names.append(PIECE_NAMES.get(att_piece.piece_type, "piece").lower())
+            sq_name = chess.square_name(sq)
+            piece_name = PIECE_NAMES.get(piece.piece_type, "piece")
+            att_str = ", ".join(att_names) if att_names else "opponent"
+            our_attacked.append(f"{piece_name} on {sq_name} (by {att_str})")
+
+    # Opponent pieces we can capture
+    opp_capturable = []
+    for sq in chess.SQUARES:
+        piece = board.piece_at(sq)
+        if piece and piece.color == opp and board.is_attacked_by(side, sq):
+            sq_name = chess.square_name(sq)
+            piece_name = PIECE_NAMES.get(piece.piece_type, "piece")
+            defended = board.is_attacked_by(opp, sq)
+            defense_str = "defended" if defended else "undefended"
+            opp_capturable.append(f"{piece_name} on {sq_name} ({defense_str})")
+
+    lines = []
+    if our_attacked:
+        lines.append(f"Your pieces under attack: {', '.join(our_attacked)}")
+    if opp_capturable:
+        lines.append(f"Opponent pieces you can capture: {', '.join(opp_capturable)}")
+    return "\n".join(lines)
+
+
+def format_move_history(history: list, game: str) -> str:
+    """Format move history for the prompt."""
+    if not history:
+        return ""
+    if game == "chess":
+        # Format as: 1. e4 e5 2. Nf3 Nc6 ...
+        parts = []
+        for i in range(0, len(history), 2):
+            move_num = i // 2 + 1
+            white_move = history[i]
+            if i + 1 < len(history):
+                black_move = history[i + 1]
+                parts.append(f"{move_num}. {white_move} {black_move}")
+            else:
+                parts.append(f"{move_num}. {white_move}")
+        return f"Recent moves: {' '.join(parts)}"
+    else:
+        # Xiangqi / other: just list moves
+        numbered = [f"{i+1}. {m}" for i, m in enumerate(history)]
+        return f"Recent moves: {', '.join(numbered)}"
+
+
 def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
-                      fen: str | None = None, san_moves: list | None = None) -> str:
-    """Build the user prompt with board + legal moves."""
+                      fen: str | None = None, san_moves: list | None = None,
+                      history: list | None = None) -> str:
+    """Build the user prompt with board + legal moves + tactical info."""
     board_str = render_board(game, board, side)
+
+    # Attacked pieces info (chess only)
+    attack_info = ""
+    if game == "chess" and fen:
+        try:
+            attack_info = chess_attacked_pieces_info(fen)
+        except Exception as e:
+            print(f"[ask_move] attack info error: {e}", file=sys.stderr)
+
+    # Move history
+    history_str = ""
+    if history:
+        history_str = format_move_history(history, game)
 
     if game == "chess" and san_moves:
         # Chess with SAN: show FEN and SAN legal moves
         moves_str = ", ".join(san_moves)
+        extra = ""
+        if history_str:
+            extra += f"\n{history_str}"
+        if attack_info:
+            extra += f"\n{attack_info}"
         return (
             f"{board_str}\n\n"
             f"FEN: {fen}\n"
-            f"Legal moves (SAN): [{moves_str}]\n\n"
+            f"Legal moves (SAN): [{moves_str}]"
+            f"{extra}\n\n"
             f"Pick the BEST move. Reply with ONLY the SAN notation.\n"
             f"Example: Nf3\n"
             f"No explanation — just the move."
@@ -80,9 +169,13 @@ def build_user_prompt(game: str, board: list, side: str, legal_moves: list,
         moves_str = ", ".join(
             f"{m['fromRow']},{m['fromCol']},{m['toRow']},{m['toCol']}" for m in legal_moves
         )
+        extra = ""
+        if history_str:
+            extra += f"\n{history_str}"
         return (
             f"{board_str}\n\n"
-            f"Legal moves: [{moves_str}]\n\n"
+            f"Legal moves: [{moves_str}]"
+            f"{extra}\n\n"
             f"Pick the BEST move. Reply with ONLY one line: fromRow,fromCol,toRow,toCol\n"
             f"Example: 6,0,5,0\n"
             f"No explanation — just the four numbers separated by commas."
@@ -351,6 +444,7 @@ def main():
     parser.add_argument("--model", default=None)
     parser.add_argument("--timeout", type=int, default=8)
     parser.add_argument("--fen", default=None, help="FEN string for chess SAN resolution")
+    parser.add_argument("--history", default=None, help="JSON array of recent moves")
     args = parser.parse_args()
 
     data = json.loads(args.board_json)
@@ -371,9 +465,18 @@ def main():
         except Exception as e:
             print(f"[ask_move] SAN generation failed: {e}", file=sys.stderr)
 
+    # Parse move history
+    history = None
+    if args.history:
+        try:
+            history = json.loads(args.history)
+        except json.JSONDecodeError:
+            pass
+
     system_prompt = load_system_prompt(args.game)
     user_prompt = build_user_prompt(args.game, board, args.side, legal_moves,
-                                    fen=args.fen, san_moves=san_moves)
+                                    fen=args.fen, san_moves=san_moves,
+                                    history=history)
 
     engine_fn = ENGINES[args.engine]
     response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
