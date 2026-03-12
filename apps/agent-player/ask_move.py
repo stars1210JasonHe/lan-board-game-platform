@@ -273,7 +273,12 @@ def parse_move(text: str, legal_moves: list, fen: str | None = None,
 
     For chess with SAN: parses SAN notation and converts to coordinates using python-chess.
     For xiangqi: parses coordinate format (digits,digits,digits,digits).
+    Returns 'resign' if LLM wants to resign.
     """
+    # Check for resignation
+    if text and 'resign' in text.strip().lower():
+        return 'resign'
+
     if fen and san_moves:
         # Chess SAN mode: parse SAN and convert to coordinates
         return _parse_chess_san(text, fen, san_moves)

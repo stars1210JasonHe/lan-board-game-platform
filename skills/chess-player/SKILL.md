@@ -44,6 +44,8 @@ Q=9, R=5, B=3, N=3, P=1.
 - Rook belongs behind passed pawns (yours or opponent's)
 - K+Q vs K: drive King to edge, then checkmate
 - K+R vs K: drive King to edge with opposition
+- **AVOID STALEMATE**: When you are winning, always check that your move leaves the opponent at least one legal move. Do NOT trap the enemy King with no moves unless it is checkmate. Leave one escape square.
+- If you are losing badly (down a Rook or more with no compensation), reply with `resign` instead of a move.
 
 ## Before You Move — Checklist
 
