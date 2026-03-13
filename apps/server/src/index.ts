@@ -16,7 +16,7 @@ import { XiangqiGame } from './games/xiangqi.js';
 import { Chess } from 'chess.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = 8765;
+const PORT = parseInt(process.env.PORT || '8765', 10);
 
 // ── DB ────────────────────────────────────────────────────────────────────────
 const db = new Database('matches.db');
@@ -776,7 +776,8 @@ function spawnEulerAgent(roomId: string, difficulty: string) {
   const aiModel  = process.env.AI_MODEL;
 
   const args = [agentPath, roomId, '--mode', 'ai',
-                '--ai-engine', aiEngine, '--difficulty', difficulty];
+                '--ai-engine', aiEngine, '--difficulty', difficulty,
+                '--port', String(PORT)];
   if (aiModel) args.push('--ai-model', aiModel);
 
   // Pass API key into subprocess env

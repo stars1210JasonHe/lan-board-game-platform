@@ -498,7 +498,7 @@ async def main():
     parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
                         help="Engine difficulty level")
     parser.add_argument("--ai-engine", default="openclaw",
-                        choices=["openclaw", "anthropic", "openrouter", "ollama", "openai"],
+                        choices=["openclaw", "openclaw-http", "anthropic", "openrouter", "ollama", "openai"],
                         help="AI engine for --mode ai (default: openclaw)")
     parser.add_argument("--ai-model", default=None,
                         help="Model name for --mode ai (optional)")
@@ -533,7 +533,7 @@ async def main():
 
     async def chat_dispatch(text: str, context: str = "", gt: str = "") -> str | None:
         """Route chat to the appropriate backend (openclaw server API or direct API)."""
-        if ai_engine == "openclaw":
+        if ai_engine in ("openclaw", "openclaw-http"):
             return await api_chat(base_url, text, context, gt)
         else:
             return await asyncio.get_event_loop().run_in_executor(
