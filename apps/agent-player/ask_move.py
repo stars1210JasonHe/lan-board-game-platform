@@ -523,8 +523,52 @@ def call_ollama(system_prompt: str, user_prompt: str, model: str | None, timeout
     return None
 
 
+def call_openclaw_http(system_prompt: str, user_prompt: str, model: str | None, timeout: int,
+                       messages: list | None = None) -> str | None:
+    """Call OpenClaw gateway via HTTP API (stateless, no session accumulation)."""
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN")
+    if not token:
+        try:
+            config_path = os.path.expanduser("~/.openclaw/openclaw.json")
+            with open(config_path) as f:
+                cfg = json.load(f)
+            token = cfg.get("gateway", {}).get("auth", {}).get("token")
+        except Exception:
+            pass
+    if not token:
+        print("[ask_move] openclaw-http: no token found", file=sys.stderr)
+        return None
+
+    if messages is None:
+        messages = [{"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}]
+
+    body = json.dumps({
+        "model": model or "openclaw:main",
+        "messages": messages,
+    }).encode()
+    req = urllib.request.Request(
+        "http://127.0.0.1:18789/v1/chat/completions",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode())
+            choices = data.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "")
+    except Exception as e:
+        print(f"[ask_move] openclaw-http error: {e}", file=sys.stderr)
+    return None
+
+
 ENGINES = {
     "openclaw": call_openclaw,
+    "openclaw-http": call_openclaw_http,
     "anthropic": call_anthropic,
     "openai": call_openai,
     "openrouter": call_openrouter,
@@ -544,6 +588,7 @@ def main():
     parser.add_argument("--session-id", default=None, help="Reuse OpenClaw session for context")
     parser.add_argument("--skip-system", action="store_true", help="Skip system prompt (already sent)")
     parser.add_argument("--history-file", default=None, help="JSON file for conversation history reuse")
+    parser.add_argument("--messages-file", default=None, help="Pre-built messages JSON file for openclaw-http")
     parser.add_argument("--pgn", default=None, help="PGN move history for chess")
     args = parser.parse_args()
 
@@ -573,7 +618,7 @@ def main():
     engine_fn = ENGINES[args.engine]
 
     # History file handling for non-openclaw engines
-    use_history = args.history_file and args.engine != "openclaw"
+    use_history = args.history_file and args.engine not in ("openclaw", "openclaw-http")
     history_messages = None
     if use_history:
         history_messages = []
@@ -588,7 +633,24 @@ def main():
         if len(history_messages) > 40:
             history_messages = history_messages[-40:]
 
-    if args.engine == "openclaw" and (args.session_id or args.skip_system):
+    # openclaw-http with messages-file: build full messages array
+    openclaw_http_messages = None
+    if args.engine == "openclaw-http" and args.messages_file and os.path.exists(args.messages_file):
+        try:
+            with open(args.messages_file) as f:
+                prior = json.load(f)
+            openclaw_http_messages = [{"role": "system", "content": system_prompt}] + prior
+            openclaw_http_messages.append({"role": "user", "content": user_prompt})
+        except Exception as e:
+            print(f"[ask_move] messages-file read error: {e}", file=sys.stderr)
+
+    if args.engine == "openclaw-http" and openclaw_http_messages is not None:
+        response = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
+                             messages=openclaw_http_messages)
+    elif args.engine == "openclaw-http":
+        # No messages file — default system+user
+        response = engine_fn(system_prompt, user_prompt, args.model, args.timeout)
+    elif args.engine == "openclaw" and (args.session_id or args.skip_system):
         response = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
                              session_id=args.session_id, skip_system=args.skip_system)
     elif history_messages is not None:
@@ -641,6 +703,16 @@ def main():
                 if args.engine == "openclaw":
                     response2 = call_openclaw(system_prompt, feedback, args.model, args.timeout,
                                               session_id=args.session_id, skip_system=True)
+                elif args.engine == "openclaw-http":
+                    retry_msgs = (openclaw_http_messages or [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ]) + [
+                        {"role": "assistant", "content": candidate_response},
+                        {"role": "user", "content": feedback},
+                    ]
+                    response2 = engine_fn(system_prompt, user_prompt, args.model, args.timeout,
+                                          messages=retry_msgs)
                 else:
                     messages = [
                         {"role": "user", "content": user_prompt},
@@ -656,6 +728,22 @@ def main():
                     break  # Engine failed, accept current move
 
             if candidate_move:
+                # Save openclaw-http messages file with the final (post-blunder-check) response
+                if args.engine == "openclaw-http" and args.messages_file:
+                    try:
+                        prior = []
+                        if os.path.exists(args.messages_file):
+                            with open(args.messages_file) as f:
+                                prior = json.load(f)
+                        prior.append({"role": "user", "content": user_prompt})
+                        prior.append({"role": "assistant", "content": candidate_response})
+                        # Cap at 8 messages (last 4 exchanges)
+                        if len(prior) > 8:
+                            prior = prior[-8:]
+                        with open(args.messages_file, "w") as f:
+                            json.dump(prior, f)
+                    except Exception as e:
+                        print(f"[ask_move] messages-file save error: {e}", file=sys.stderr)
                 print(candidate_move)
                 return
 

@@ -661,8 +661,11 @@ async def main():
                 cmd += ["--session-id", move_session_id]
                 if not move_first_call:
                     cmd += ["--skip-system"]
+            # openclaw-http: pass messages file for conversation history
+            elif ai_engine == "openclaw-http":
+                cmd += ["--messages-file", f"/tmp/game-messages-{room_id.lower()}.json"]
             # History file for non-openclaw engines
-            if ai_engine != "openclaw" and move_history_file:
+            if ai_engine not in ("openclaw", "openclaw-http") and move_history_file:
                 cmd += ["--history-file", move_history_file]
             try:
                 result = await asyncio.get_event_loop().run_in_executor(
@@ -886,6 +889,11 @@ async def main():
                     os.remove(move_history_file)
                 except FileNotFoundError:
                     pass
+                # Clean stale messages file for openclaw-http
+                try:
+                    os.remove(f"/tmp/game-messages-{room_id.lower()}.json")
+                except FileNotFoundError:
+                    pass
                 # PGN tracking for chess
                 if game_type == "chess":
                     import chess as _chess
@@ -953,12 +961,16 @@ async def main():
                     reply = await event_reply("I lost the game", "lose", ctx, game_type or "")
                 await send_ws({"type": "chat", "text": reply})
 
-                # Clean up history file
+                # Clean up history/messages files
                 if move_history_file:
                     try:
                         os.remove(move_history_file)
                     except FileNotFoundError:
                         pass
+                try:
+                    os.remove(f"/tmp/game-messages-{room_id.lower()}.json")
+                except FileNotFoundError:
+                    pass
 
                 # Stay alive: reset local state, wait for human to click Play Again
                 # The human triggers the room reset via play_again; we just wait for room_state(waiting)
