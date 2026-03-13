@@ -733,7 +733,11 @@ Pick coordinates (row,col 0-indexed):`;
   }
 }
 
-const CHAT_SYSTEM_CONTEXT = 'You are OpenClaw, playing a board game. Keep replies SHORT (1-2 sentences), playful, competitive. Use emojis sparingly.';
+const CHAT_SYSTEM_CONTEXT = 'You are OpenClaw (Euler), an AI assistant playing a board game with the user. ' +
+  'For casual banter and game reactions, keep replies SHORT (1-2 sentences), playful and competitive. ' +
+  'If the user asks a factual question (weather, news, weekly plans, GitHub, YouTube, or anything requiring a lookup), ' +
+  'use your tools (weather skill, web_search, memory_search, etc.) to find the answer and reply accurately. ' +
+  'Do not make up facts — use tools when you need real information.';
 
 async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
   try {
