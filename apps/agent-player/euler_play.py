@@ -443,111 +443,6 @@ def chess_move(legal_moves):
 
 # ── Xiangqi AI (local fallback) ───────────────────────────────────────────────
 
-def xiangqi_legal_moves(board_rows, side):
-    """Generate all pseudo-legal xiangqi moves for the given side.
-    Returns list of {fromRow, fromCol, toRow, toCol} dicts."""
-    upper = side == 'red'
-    board = [list(row) for row in board_rows]
-
-    def in_bounds(r, c):
-        return 0 <= r <= 9 and 0 <= c <= 8
-
-    def is_enemy(r, c):
-        p = board[r][c]
-        if p == ' ':
-            return False
-        return (p == p.upper()) != upper
-
-    def is_empty(r, c):
-        return board[r][c] == ' '
-
-    def can_target(r, c):
-        return in_bounds(r, c) and (is_empty(r, c) or is_enemy(r, c))
-
-    def piece_moves(r, c, p):
-        t = p.upper()
-        moves = []
-        if t == 'K':
-            palace_rows = range(0, 3) if upper else range(7, 10)
-            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                nr, nc = r+dr, c+dc
-                if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
-                    moves.append((nr, nc))
-        elif t == 'A':
-            palace_rows = range(0, 3) if upper else range(7, 10)
-            for dr, dc in [(1,1),(1,-1),(-1,1),(-1,-1)]:
-                nr, nc = r+dr, c+dc
-                if in_bounds(nr, nc) and nr in palace_rows and 3 <= nc <= 5 and can_target(nr, nc):
-                    moves.append((nr, nc))
-        elif t == 'B':
-            home = range(0, 5) if upper else range(5, 10)
-            for dr, dc in [(2,2),(2,-2),(-2,2),(-2,-2)]:
-                nr, nc = r+dr, c+dc
-                mr, mc = r+dr//2, c+dc//2
-                if in_bounds(nr, nc) and nr in home and is_empty(mr, mc) and can_target(nr, nc):
-                    moves.append((nr, nc))
-        elif t == 'N':
-            for dr, dc, br, bc in [(-1,0,-2,1),(-1,0,-2,-1),(1,0,2,1),(1,0,2,-1),(0,-1,1,-2),(0,-1,-1,-2),(0,1,1,2),(0,1,-1,2)]:
-                sr, sc = r+dr, c+dc
-                if in_bounds(sr, sc) and is_empty(sr, sc):
-                    nr, nc = r+br, c+bc
-                    if in_bounds(nr, nc) and can_target(nr, nc):
-                        moves.append((nr, nc))
-        elif t == 'R':
-            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                nr, nc = r+dr, c+dc
-                while in_bounds(nr, nc):
-                    if is_empty(nr, nc):
-                        moves.append((nr, nc))
-                    else:
-                        if is_enemy(nr, nc):
-                            moves.append((nr, nc))
-                        break
-                    nr += dr; nc += dc
-        elif t == 'C':
-            for dr, dc in [(0,1),(0,-1),(1,0),(-1,0)]:
-                nr, nc = r+dr, c+dc
-                jumped = False
-                while in_bounds(nr, nc):
-                    if not jumped:
-                        if is_empty(nr, nc):
-                            moves.append((nr, nc))
-                        else:
-                            jumped = True
-                    else:
-                        if not is_empty(nr, nc):
-                            if is_enemy(nr, nc):
-                                moves.append((nr, nc))
-                            break
-                    nr += dr; nc += dc
-        elif t == 'P':
-            fwd = 1 if upper else -1
-            crossed = r >= 5 if upper else r <= 4
-            nr, nc = r+fwd, c
-            if in_bounds(nr, nc) and can_target(nr, nc):
-                moves.append((nr, nc))
-            if crossed:
-                for dc in [-1, 1]:
-                    if in_bounds(r, c+dc) and can_target(r, c+dc):
-                        moves.append((r, c+dc))
-        return moves
-
-    all_moves = []
-    for r, row in enumerate(board):
-        for c, p in enumerate(row):
-            if p == ' ':
-                continue
-            if (p == p.upper()) != upper:
-                continue
-            for nr, nc in piece_moves(r, c, p):
-                all_moves.append({"fromRow": r, "fromCol": c, "toRow": nr, "toCol": nc})
-    return all_moves
-
-
-def xiangqi_move(board_rows, side):
-    """Pick a random xiangqi move, preferring captures."""
-    return choose_xiangqi_move(board_rows, side)
-
 
 def parse_xiangqi_coord(coord):
     """Convert a coord like e7c8 to a move dict."""
@@ -578,7 +473,7 @@ def xiangqi_server_legal_moves(gs):
 
 def choose_xiangqi_move(board_rows, side, legal_moves=None):
     """Pick a xiangqi move, preferring captures from a fully legal move list."""
-    moves = legal_moves if legal_moves is not None else xiangqi_legal_moves(board_rows, side)
+    moves = legal_moves
     if not moves:
         return None
     board = [list(row) for row in board_rows]
@@ -729,8 +624,6 @@ async def main():
 
             if gt == "xiangqi":
                 legal = xiangqi_server_legal_moves(gs)
-                if not legal:
-                    legal = xiangqi_legal_moves(board, side)
                 if not legal:
                     return None
                 board_json = json.dumps({"board": board, "legalMoves": legal})
