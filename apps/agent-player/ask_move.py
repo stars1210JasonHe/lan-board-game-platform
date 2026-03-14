@@ -547,8 +547,9 @@ def call_openclaw_http(system_prompt: str, user_prompt: str, model: str | None, 
         "model": model or "openclaw:main",
         "messages": messages,
     }).encode()
+    gateway_url = os.environ.get("OPENCLAW_GATEWAY_URL", "http://127.0.0.1:18789")
     req = urllib.request.Request(
-        "http://127.0.0.1:18789/v1/chat/completions",
+        f"{gateway_url}/v1/chat/completions",
         data=body,
         headers={
             "Content-Type": "application/json",

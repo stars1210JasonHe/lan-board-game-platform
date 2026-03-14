@@ -760,7 +760,7 @@ async function handleApiChat(req: IncomingMessage, res: ServerResponse) {
         jsonResponse(res, 200, { reply: null });
         return;
       }
-      const trimmed = reply.trim().slice(0, 200);
+      const trimmed = reply.trim().slice(0, 1000);
       jsonResponse(res, 200, { reply: trimmed });
     } catch {
       jsonResponse(res, 200, { reply: null });
