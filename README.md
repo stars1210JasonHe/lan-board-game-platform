@@ -63,45 +63,48 @@ npm run dev
 
 ### 2. Configure LLM (choose one)
 
-#### Option A: OpenClaw (recommended if you have it)
+Set environment variables before starting, or put them in `apps/server/.env`.
 
-No extra config needed. The server calls `openclaw agent` automatically.
+#### Option A: OpenClaw HTTP API (recommended if you have OpenClaw)
 
 ```bash
-npm start  # Just works
+AI_ENGINE=openclaw-http
+OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789   # your OpenClaw gateway URL
+OPENCLAW_GATEWAY_TOKEN=your_token_here         # from ~/.openclaw/openclaw.json
+AI_MODEL=anthropic/claude-sonnet-4-6           # any model your gateway supports
 ```
+
+Or just run without any config — if `~/.openclaw/openclaw.json` exists on the server machine, the token is read automatically.
 
 #### Option B: OpenAI API
 
 ```bash
-LLM_PROVIDER=openai LLM_API_KEY=sk-xxx LLM_MODEL=gpt-4o npm start
+AI_ENGINE=openai
+AI_API_KEY=sk-xxx
+AI_MODEL=gpt-4o
 ```
 
 #### Option C: Anthropic API
 
 ```bash
-LLM_PROVIDER=anthropic LLM_API_KEY=sk-ant-xxx LLM_MODEL=claude-sonnet-4-20250514 npm start
+AI_ENGINE=anthropic
+AI_API_KEY=sk-ant-xxx
+AI_MODEL=claude-3-5-haiku-20241022
 ```
 
-#### Option D: Any OpenAI-compatible API
+#### Option D: OpenRouter (access 100+ models with one key)
 
 ```bash
-LLM_PROVIDER=openai LLM_API_KEY=xxx LLM_MODEL=your-model LLM_BASE_URL=https://your-endpoint.com npm start
+AI_ENGINE=openrouter
+AI_API_KEY=sk-or-v1-xxx
+AI_MODEL=openai/gpt-4o-mini
 ```
 
-#### Option E: Config file
+#### Option E: Ollama (local, no API key)
 
-Create `config.json` in the project root:
-
-```json
-{
-  "llm": {
-    "provider": "openai",
-    "apiKey": "sk-xxx",
-    "model": "gpt-4o",
-    "baseUrl": ""
-  }
-}
+```bash
+AI_ENGINE=ollama
+AI_MODEL=llama3.1
 ```
 
 ### 3. Open in your browser
@@ -276,30 +279,25 @@ lan-board-game-platform/
 
 ---
 
-### Self-hosting without OpenClaw
+### AI Engine Configuration
 
-By default, the vs-AI mode uses [OpenClaw](https://openclaw.ai) as the AI backend.
-If you are self-hosting without OpenClaw, you can use any OpenAI-compatible API instead.
-
-1. Copy the example env file:
-   ```bash
-   cp apps/server/.env.example apps/server/.env
-   ```
-2. Edit `apps/server/.env` and fill in your API key:
-   ```
-   AI_ENGINE=openrouter        # or: anthropic, ollama
-   AI_MODEL=openai/gpt-4o-mini # any model supported by your engine
-   AI_API_KEY=sk-or-v1-...     # your API key
-   ```
-3. Restart the server. The AI opponent will now use your configured API.
+The AI opponent is configured via environment variables in `apps/server/.env`.
 
 **Supported engines:**
-| Engine | Models | Key required |
-|--------|--------|-------------|
-| `openclaw` | Any model via OpenClaw gateway | No (uses OpenClaw auth) |
-| `openrouter` | GPT-4o, Claude, Gemini, etc. | [openrouter.ai](https://openrouter.ai) |
-| `anthropic` | Claude 3.5 Haiku, Sonnet, etc. | [console.anthropic.com](https://console.anthropic.com) |
-| `ollama` | Any local model | No (local) |
+
+| `AI_ENGINE` | `AI_MODEL` example | Key required |
+|---|---|---|
+| `openclaw-http` | `anthropic/claude-sonnet-4-6` | `OPENCLAW_GATEWAY_TOKEN` (auto-read from `~/.openclaw/openclaw.json` if present) |
+| `openclaw` | _(uses OpenClaw CLI)_ | No extra config if OpenClaw is installed |
+| `openai` | `gpt-4o`, `gpt-4o-mini` | `AI_API_KEY` from [platform.openai.com](https://platform.openai.com) |
+| `anthropic` | `claude-3-5-haiku-20241022` | `AI_API_KEY` from [console.anthropic.com](https://console.anthropic.com) |
+| `openrouter` | `openai/gpt-4o-mini`, `anthropic/claude-3-haiku` | `AI_API_KEY` from [openrouter.ai](https://openrouter.ai) |
+| `ollama` | `llama3.1`, `mistral` | No key (local) |
+
+**OpenClaw users:** set `OPENCLAW_GATEWAY_URL` if your gateway is not on `127.0.0.1:18789`:
+```
+OPENCLAW_GATEWAY_URL=http://192.168.1.x:18789
+```
 
 ---
 
