@@ -4,7 +4,7 @@
 
 A self-hosted board game server where you can play classic board games against an AI powered by any LLM (ChatGPT, Claude, local models) — or challenge friends on your local network. Drop it on any machine, open a browser, and start playing in under a minute.
 
-![screenshot](docs/screenshot.png)
+[![Demo Video](docs/screenshot.png)](https://youtu.be/YDg-eCBUPLY)
 
 ---
 
