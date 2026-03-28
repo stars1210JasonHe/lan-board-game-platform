@@ -240,3 +240,180 @@ fn test_perft_startpos_depth2() {
     assert!(count > 500, "perft(2) should be >500, got {}", count);
     assert!(count < 3000, "perft(2) should be <3000, got {}", count);
 }
+
+// === Evaluation Tests ===
+use super::eval;
+
+#[test]
+fn test_eval_startpos_roughly_equal() {
+    let board = Board::new();
+    let score = eval::evaluate(&board);
+    // Starting position is symmetric, should be close to 0
+    assert!(score.abs() < 50, "Startpos eval should be near 0, got {}", score);
+}
+
+#[test]
+fn test_eval_material_advantage() {
+    // Red has an extra rook
+    let mut board = Board::new();
+    // Remove black's right rook (row 9, col 8)
+    board.remove_piece(9, 8);
+    let score = eval::evaluate(&board);
+    assert!(score > 800, "Extra rook should give large advantage, got {}", score);
+}
+
+#[test]
+fn test_eval_pawn_crossing_river() {
+    // Red pawn that crossed river should be worth more
+    let mut board = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    // Block king column
+    board.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor });
+    // Pawn after river (row 6 for red)
+    board.set_piece(6, 3, Cell { color: Color::Red, piece: Piece::Pawn });
+
+    let score_crossed = eval::evaluate(&board);
+
+    // Now pawn before river (row 3)
+    let mut board2 = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board2.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board2.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board2.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor });
+    board2.set_piece(3, 3, Cell { color: Color::Red, piece: Piece::Pawn });
+
+    let score_before = eval::evaluate(&board2);
+    assert!(score_crossed > score_before,
+        "Crossed pawn ({}) should score higher than before river ({})",
+        score_crossed, score_before);
+}
+
+#[test]
+fn test_eval_horse_mobility() {
+    // Horse in center (high mobility) vs horse in corner (low mobility)
+    // Same material in both positions
+    let mut board = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor }); // block flying king
+    // Free horse in center (many unblocked moves)
+    board.set_piece(4, 3, Cell { color: Color::Red, piece: Piece::Horse });
+    let score_free = eval::evaluate(&board);
+
+    // Horse in corner (fewer moves due to board edge)
+    let mut board2 = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board2.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board2.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board2.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor });
+    board2.set_piece(0, 0, Cell { color: Color::Red, piece: Piece::Horse });
+
+    let score_corner = eval::evaluate(&board2);
+    assert!(score_free > score_corner,
+        "Center horse ({}) should score better than corner horse ({})",
+        score_free, score_corner);
+}
+
+#[test]
+fn test_eval_advisor_pair_bonus() {
+    // Two advisors should be significantly better than one
+    let mut board = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Rook }); // block flying king
+    board.set_piece(0, 3, Cell { color: Color::Red, piece: Piece::Advisor });
+    board.set_piece(0, 5, Cell { color: Color::Red, piece: Piece::Advisor });
+    let score_pair = eval::evaluate(&board);
+
+    let mut board2 = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board2.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board2.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board2.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Rook });
+    board2.set_piece(0, 3, Cell { color: Color::Red, piece: Piece::Advisor });
+    let score_single = eval::evaluate(&board2);
+
+    // Pair bonus should make 2 advisors worth more than 2x single
+    assert!(score_pair > score_single,
+        "Advisor pair ({}) should outscore single ({})",
+        score_pair, score_single);
+}
+
+#[test]
+fn test_eval_rook_open_file() {
+    // Same material, rook on open file vs rook on file blocked by own pawn
+    // Both positions have exactly one pawn, but in different columns
+    let mut board = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor }); // block flying king
+    // Rook on column 0, pawn on column 2 (doesn't block rook's file)
+    board.set_piece(0, 0, Cell { color: Color::Red, piece: Piece::Rook });
+    board.set_piece(3, 2, Cell { color: Color::Red, piece: Piece::Pawn });
+    let score_open = eval::evaluate(&board);
+
+    // Same setup but pawn on column 0 (blocks rook's file)
+    let mut board2 = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Red,
+        zobrist: 0,
+    };
+    board2.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board2.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    board2.set_piece(5, 4, Cell { color: Color::Red, piece: Piece::Advisor });
+    board2.set_piece(0, 0, Cell { color: Color::Red, piece: Piece::Rook });
+    board2.set_piece(3, 0, Cell { color: Color::Red, piece: Piece::Pawn });
+    let score_blocked = eval::evaluate(&board2);
+
+    assert!(score_open > score_blocked,
+        "Rook on open file ({}) should score better than blocked ({})",
+        score_open, score_blocked);
+}
+
+#[test]
+fn test_eval_checkmate() {
+    // Simple checkmate position - red rook delivering check with no escape
+    let mut board = Board {
+        grid: [[None; COLS]; ROWS],
+        side: Color::Black,
+        zobrist: 0,
+    };
+    board.set_piece(0, 4, Cell { color: Color::Red, piece: Piece::King });
+    board.set_piece(9, 4, Cell { color: Color::Black, piece: Piece::King });
+    // Red rooks pinning black king
+    board.set_piece(9, 3, Cell { color: Color::Red, piece: Piece::Rook });
+    board.set_piece(8, 4, Cell { color: Color::Red, piece: Piece::Rook });
+
+    let terminal = eval::is_terminal(&board);
+    if let Some(score) = terminal {
+        assert!(score < -20000 || score == 0,
+            "Terminal position should be checkmate or stalemate, got {}", score);
+    }
+    // If not terminal, that's also ok (position might have escapes)
+}

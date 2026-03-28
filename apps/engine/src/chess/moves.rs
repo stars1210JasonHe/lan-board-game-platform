@@ -650,6 +650,19 @@ pub fn generate_captures(board: &Board) -> Vec<Move> {
     }).collect()
 }
 
+// Public wrappers for attack computations (used by eval for mobility)
+pub fn knight_attacks_bb(sq: u8) -> u64 {
+    TABLES.knight[sq as usize]
+}
+
+pub fn bishop_attacks_bb(sq: u8, occupied: u64) -> u64 {
+    bishop_attacks(sq, occupied)
+}
+
+pub fn rook_attacks_bb(sq: u8, occupied: u64) -> u64 {
+    rook_attacks(sq, occupied)
+}
+
 /// Perft: count leaf nodes at given depth (for testing)
 pub fn perft(board: &Board, depth: u32) -> u64 {
     if depth == 0 {

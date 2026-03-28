@@ -213,3 +213,130 @@ fn test_zobrist_consistency() {
     let board2 = Board::from_fen(&b2.to_fen());
     assert_eq!(b2.zobrist, board2.zobrist);
 }
+
+// === Evaluation Tests ===
+use super::eval;
+
+#[test]
+fn test_eval_startpos_roughly_equal() {
+    let board = Board::new();
+    let score = eval::evaluate(&board);
+    // Starting position should be close to 0 (symmetric)
+    assert!(score.abs() < 50, "Startpos eval should be near 0, got {}", score);
+}
+
+#[test]
+fn test_eval_material_advantage() {
+    // White has an extra queen
+    let board = Board::from_fen("rnb1kbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    let score = eval::evaluate(&board);
+    assert!(score > 800, "Extra queen should give large advantage, got {}", score);
+}
+
+#[test]
+fn test_eval_passed_pawn() {
+    // White pawn on e6 with no blockers = advanced passed pawn
+    let board = Board::from_fen("4k3/8/4P3/8/8/8/8/4K3 w - - 0 1");
+    let score_passed = eval::evaluate(&board);
+    // White pawn on e2 = not passed but on starting square
+    let board2 = Board::from_fen("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
+    let score_normal = eval::evaluate(&board2);
+    assert!(score_passed > score_normal,
+        "Passed pawn on e6 ({}) should score higher than pawn on e2 ({})",
+        score_passed, score_normal);
+}
+
+#[test]
+fn test_eval_doubled_pawns_penalty() {
+    // Doubled pawns on e-file
+    let board = Board::from_fen("4k3/8/8/8/4P3/8/4P3/4K3 w - - 0 1");
+    let score_doubled = eval::evaluate(&board);
+    // Pawns on e and d files (not doubled)
+    let board2 = Board::from_fen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    let score_normal = eval::evaluate(&board2);
+    assert!(score_normal > score_doubled,
+        "Non-doubled ({}) should score better than doubled ({})",
+        score_normal, score_doubled);
+}
+
+#[test]
+fn test_eval_isolated_pawn_penalty() {
+    // Isolated pawn on e-file (no pawns on d or f)
+    let board = Board::from_fen("4k3/8/8/8/4P3/8/P6P/4K3 w - - 0 1");
+    let score = eval::evaluate(&board);
+    // Non-isolated: pawns on d and e
+    let board2 = Board::from_fen("4k3/8/8/8/3PP3/8/7P/4K3 w - - 0 1");
+    let score2 = eval::evaluate(&board2);
+    assert!(score2 > score,
+        "Non-isolated pawns ({}) should score better than isolated ({})",
+        score2, score);
+}
+
+#[test]
+fn test_eval_bishop_pair() {
+    // White has bishop pair
+    let board = Board::from_fen("4k3/8/8/8/8/8/8/2B1KB2 w - - 0 1");
+    let score_pair = eval::evaluate(&board);
+    // White has two knights instead (same material but no bishop pair bonus)
+    let board2 = Board::from_fen("4k3/8/8/8/8/8/8/2N1KN2 w - - 0 1");
+    let score_knights = eval::evaluate(&board2);
+    // Bishop pair should be worth more than two knights (bishop value + pair bonus)
+    assert!(score_pair > score_knights,
+        "Bishop pair ({}) should outscore two knights ({})",
+        score_pair, score_knights);
+}
+
+#[test]
+fn test_eval_rook_on_open_file() {
+    // Rook on e1, e-file is open (no e-pawns for either side)
+    let board = Board::from_fen("4k3/pppp1ppp/8/8/8/8/PPPP1PPP/4R1K1 w - - 0 1");
+    let score_open = eval::evaluate(&board);
+    // Rook on a1, a-file is closed (both sides have a-pawns)
+    let board2 = Board::from_fen("4k3/pppp1ppp/8/8/8/8/PPPP1PPP/R5K1 w - - 0 1");
+    let score_closed = eval::evaluate(&board2);
+    assert!(score_open > score_closed,
+        "Rook on open file ({}) should score better than closed ({})",
+        score_open, score_closed);
+}
+
+#[test]
+fn test_eval_rook_on_seventh() {
+    // White rook on 7th rank
+    let board = Board::from_fen("4k3/R7/8/8/8/8/8/4K3 w - - 0 1");
+    let score_7th = eval::evaluate(&board);
+    // White rook on 4th rank
+    let board2 = Board::from_fen("4k3/8/8/8/R7/8/8/4K3 w - - 0 1");
+    let score_4th = eval::evaluate(&board2);
+    assert!(score_7th > score_4th,
+        "Rook on 7th ({}) should score better than 4th ({})",
+        score_7th, score_4th);
+}
+
+#[test]
+fn test_eval_king_safety_pawn_shield() {
+    // Castled king with pawn shield
+    let board = Board::from_fen("r3k3/8/8/8/8/8/5PPP/5RK1 w q - 0 1");
+    let score_safe = eval::evaluate(&board);
+    // King exposed (no pawn shield)
+    let board2 = Board::from_fen("r3k3/8/8/8/8/8/8/5RK1 w q - 0 1");
+    let score_exposed = eval::evaluate(&board2);
+    assert!(score_safe > score_exposed,
+        "King with shield ({}) should score better than exposed ({})",
+        score_safe, score_exposed);
+}
+
+#[test]
+fn test_eval_symmetry() {
+    // Symmetric position should evaluate to ~0
+    let board = Board::from_fen("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+    let score = eval::evaluate(&board);
+    assert!(score.abs() < 30, "Symmetric position should be near 0, got {}", score);
+}
+
+#[test]
+fn test_eval_checkmate() {
+    let board = Board::from_fen("rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3");
+    let terminal = eval::is_terminal(&board);
+    assert!(terminal.is_some());
+    assert!(terminal.unwrap() < -20000, "Checkmate should be very negative");
+}
