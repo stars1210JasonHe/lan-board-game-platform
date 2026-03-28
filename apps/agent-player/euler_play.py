@@ -29,8 +29,12 @@ ENGINES = {
     'xiangqi': '/usr/games/fairy-stockfish',
 }
 
+LOCAL_ENGINE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  '..', 'engine', 'target', 'release', 'board-engine')
+
 DIFFICULTY_SKILL = {'beginner': 2, 'easy': 6, 'medium': 12, 'hard': 16, 'max': 20}
 DIFFICULTY_TIME = {'beginner': 0.2, 'easy': 0.5, 'medium': 1.0, 'hard': 2.0, 'max': 3.0}
+LOCAL_ENGINE_TIME = {'beginner': 500, 'easy': 1000, 'medium': 3000, 'hard': 5000, 'max': 10000}
 VALID_DIFFICULTIES = list(DIFFICULTY_SKILL.keys())
 MAX_ILLEGAL_RETRIES = 5  # max retries before giving up on an illegal move
 
@@ -199,6 +203,37 @@ def engine_xiangqi_move(board_rows, current_player, difficulty='medium'):
         except Exception:
             pass
         proc.terminate()
+    return None
+
+
+def local_engine_chess_move(fen, difficulty='medium'):
+    """Get a move from the local Rust chess engine."""
+    time_ms = LOCAL_ENGINE_TIME.get(difficulty, 3000)
+    result = subprocess.run(
+        [LOCAL_ENGINE_PATH, '--game', 'chess', '--fen', fen, '--time', str(time_ms)],
+        capture_output=True, text=True, timeout=time_ms / 1000 + 10
+    )
+    if result.returncode == 0:
+        uci_move = result.stdout.strip()
+        if uci_move:
+            return {"uci": uci_move}
+    return None
+
+
+def local_engine_xiangqi_move(board_rows, current_player, difficulty='medium'):
+    """Get a move from the local Rust xiangqi engine."""
+    time_ms = LOCAL_ENGINE_TIME.get(difficulty, 3000)
+    fen = xiangqi_board_to_fen(board_rows, current_player)
+    result = subprocess.run(
+        [LOCAL_ENGINE_PATH, '--game', 'xiangqi', '--fen', fen, '--time', str(time_ms)],
+        capture_output=True, text=True, timeout=time_ms / 1000 + 10
+    )
+    if result.returncode == 0:
+        coord = result.stdout.strip()  # e.g. "h2e2"
+        m = re.match(r'^([a-i])(\d)([a-i])(\d)$', coord)
+        if m:
+            return {"fromRow": int(m.group(2)), "fromCol": ord(m.group(1)) - ord('a'),
+                    "toRow": int(m.group(4)), "toCol": ord(m.group(3)) - ord('a')}
     return None
 
 
@@ -493,8 +528,8 @@ async def main():
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-ai-chat", action="store_true",
                         help="Disable AI chat, use canned replies (fallback)")
-    parser.add_argument("--mode", choices=["euler", "engine", "ai"], default=None,
-                        help="AI mode: euler/ai (LLM via ask_move.py), engine (Stockfish)")
+    parser.add_argument("--mode", choices=["euler", "engine", "local-engine", "ai"], default=None,
+                        help="AI mode: euler/ai (LLM), engine (Stockfish), local-engine (Rust)")
     parser.add_argument("--difficulty", choices=VALID_DIFFICULTIES, default=None,
                         help="Engine difficulty level")
     parser.add_argument("--ai-engine", default="openclaw",
@@ -707,7 +742,34 @@ async def main():
                 return None, False
             gt = gs.get("gameType")
 
-            # 1. Engine mode: Stockfish / Fairy-Stockfish
+            # 1a. Local engine mode: Rust board-engine binary
+            if mode == 'local-engine' and gt in ('chess', 'xiangqi'):
+                try:
+                    if gt == 'chess':
+                        fen = gs.get('fen')
+                        legal = gs.get('legalMoves', [])
+                        if fen:
+                            result = await asyncio.get_event_loop().run_in_executor(
+                                None, lambda: local_engine_chess_move(fen, difficulty)
+                            )
+                            if result and (not legal or result['uci'] in legal):
+                                print(f"🦀 Local engine chose: {result}")
+                                return result, False
+                            elif result:
+                                print(f"⚠️ Local engine move {result} not in legal moves, falling back")
+                    elif gt == 'xiangqi':
+                        board_rows = gs.get('board', [])
+                        cur = gs.get('currentPlayer', 'red')
+                        result = await asyncio.get_event_loop().run_in_executor(
+                            None, lambda: local_engine_xiangqi_move(board_rows, cur, difficulty)
+                        )
+                        if result:
+                            print(f"🦀 Local engine chose: {result}")
+                            return result, False
+                except Exception as e:
+                    print(f"⚠️ Local engine error: {e}, falling back to LLM")
+
+            # 1b. Engine mode: Stockfish / Fairy-Stockfish
             if mode == 'engine' and gt in ('chess', 'xiangqi'):
                 try:
                     if gt == 'chess':
@@ -990,7 +1052,18 @@ async def main():
 
                     # In-game commands
                     stripped = text.strip().lower()
-                    if stripped.startswith('/engine'):
+                    if stripped.startswith('/local-engine') or stripped.startswith('/local_engine'):
+                        parts = stripped.split()
+                        new_diff = parts[1] if len(parts) > 1 else difficulty
+                        if new_diff not in VALID_DIFFICULTIES:
+                            new_diff = 'medium'
+                        mode = 'local-engine'
+                        difficulty = new_diff
+                        print(f"🦀 Switched to local engine mode ({difficulty})")
+                        await send_ws({"type": "chat",
+                                       "text": f"🦀 Switched to local Rust engine ({difficulty})"})
+                        continue
+                    elif stripped.startswith('/engine'):
                         parts = stripped.split()
                         new_diff = parts[1] if len(parts) > 1 else difficulty
                         if new_diff not in VALID_DIFFICULTIES:
