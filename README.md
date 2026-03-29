@@ -18,9 +18,10 @@ https://github.com/user-attachments/assets/80e0270f-33d6-4276-a2d1-eb201cd35ba1
 | **Chess** | 8×8 board | Checkmate the opponent's king |
 | **Xiangqi** (中国象棋) | 10×9 board | Checkmate the opponent's general |
 
-### AI opponents — three flavors
+### AI opponents — four flavors
 
 - **LLM AI** — powered by any large language model (OpenAI, Anthropic, OpenClaw, or custom). Reads game-specific skill files for strategy. Chats with you during the game.
+- **Local Rust engine** ⚡ — custom-built chess & xiangqi engine in Rust. Alpha-beta search with iterative deepening, transposition tables, killer moves, quiescence search, and tuned evaluation (king safety, pawn structure, mobility). Chess: depth 7 in 3s (~1.8M nodes). Xiangqi: depth 4 in 3s. Zero API cost, runs entirely offline.
 - **Stockfish / Fairy-Stockfish engine** — classical engine for Chess and Xiangqi, with five difficulty levels (Beginner → Max)
 - **Local minimax** — fast, free, offline algorithm for Gomoku (depth 5, iterative deepening, no API needed)
 
@@ -246,8 +247,8 @@ AI Bot Client  (Python)
 | Database | SQLite via `better-sqlite3` 9.4 |
 | Frontend | Vanilla JS + HTML5 Canvas (no framework, no build) |
 | AI bot | Python 3 + `websockets` |
-| Chess engine | Stockfish (optional) |
-| Xiangqi engine | Fairy-Stockfish (optional) |
+| Chess engine | Built-in Rust engine, or Stockfish (optional) |
+| Xiangqi engine | Built-in Rust engine, or Fairy-Stockfish (optional) |
 | LLM | Any OpenAI/Anthropic-compatible API or OpenClaw |
 
 ---
